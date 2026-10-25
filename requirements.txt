@@ -1,4 +1,2 @@
 playwright>=1.48,<2
-ddgs>=9.0,<10
-certifi>=2024.2
 cmudict>=1.0.32

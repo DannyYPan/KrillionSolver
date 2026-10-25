@@ -43,7 +43,7 @@ ollama create krillionsolver:8b -f training/export/Modelfile
 ollama run krillionsolver:8b
 ```
 
-The desktop launcher checks local Ollama at `http://127.0.0.1:11434`, starts `ollama serve` hidden if needed, and selects `krillionsolver:8b` when that fine-tuned tag is installed. Otherwise it uses `llama3.1:latest` (the base 8B model). Both choices stay on Llama 3.1 8B. Answers are still labeled as unverified, and the app applies deterministic constraints/exclusions where it can.
+The desktop launcher checks local Ollama at `http://127.0.0.1:11434`, starts `ollama serve` hidden if needed, and selects `krillionsolver:8b` when that fine-tuned tag is installed. Otherwise it uses `llama3.1:latest` (the base 8B model). Both choices stay on Llama 3.1 8B. The app applies deterministic constraints and exclusions where it can.
 
 To run the desktop app with the fine-tuned tag directly from PowerShell:
 

@@ -9,8 +9,8 @@ from typing import Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from .answer_lexicon import satisfies_constraint
-from .search_provider import split_prompt_exclusions
+from .answer_lexicon import candidate_check
+from .prompt_constraints import split_prompt_exclusions
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("KRILLION_OLLAMA_MODEL", "llama3.1:latest").strip()
@@ -61,23 +61,20 @@ def parse_suggestions(text: str, prompt: str, excluded_answers: list[str] | None
             plain.extend(_parts(line))
         ordered = plain[:5]
     seen: set[str] = set()
-    results = []
+    ranked_results: list[tuple[int, int, dict[str, object]]] = []
     for answer in ordered:
         key = re.sub(r"\W+", " ", answer.casefold()).strip()
-        if not key or key in seen or key in excluded_keys or not satisfies_constraint(answer, core):
+        if not key or key in seen or key in excluded_keys:
+            continue
+        check = candidate_check(answer, core)
+        if check == "reject":
             continue
         seen.add(key)
-        results.append({
-            "answer": answer,
-            "evidence": "Suggested by your local Ollama model; not checked against Krillion's accepted answers.",
-            "title": "Local Ollama suggestion",
-            "url": "",
-            "sources": [],
-            "evidence_status": "Local model suggestion · unverified",
-            "evidence_score": 0,
-            "source_count": 0,
-        })
-    return results
+        # Confirmed local matches keep the model's order at the top. Candidates
+        # outside the local data remain available afterward to avoid false negatives.
+        ranked_results.append((0 if check == "match" else 1, len(ranked_results), {"answer": answer}))
+    ranked_results.sort(key=lambda item: (item[0], item[1]))
+    return [item[2] for item in ranked_results]
 
 
 def suggest(

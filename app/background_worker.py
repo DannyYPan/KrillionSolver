@@ -10,7 +10,7 @@ from .answer_lexicon import local_candidates
 from .ollama_provider import OLLAMA_MODEL, suggest as suggest_with_ollama
 from .prompt_detector import normalize_prompt
 from .search_cache import SearchCache
-from .search_provider import split_prompt_exclusions
+from .prompt_constraints import split_prompt_exclusions
 
 
 def result_is_current(request_id: int, current_request_id: int, prompt: str, current_prompt: str) -> bool:
@@ -49,7 +49,6 @@ class SearchWorker:
         def emit(candidates: list[dict], complete: bool, error: str | None, source: str) -> None:
             payload = {
                 "prompt": prompt,
-                "query": "Local Ollama answer (web search skipped)",
                 "results": [],
                 "candidates": list(candidates),
                 "source": source,
@@ -80,7 +79,7 @@ class SearchWorker:
                 if not OLLAMA_MODEL:
                     model_error = "Ollama is disabled."
                 elif self._ollama_failure_until > time.monotonic():
-                    model_error = "Ollama recently failed; use Refresh Search to retry."
+                    model_error = "Ollama recently failed; use Refresh Answer to retry."
                 else:
                     try:
                         def publish_partial(partial: list[dict]) -> None:
@@ -100,7 +99,7 @@ class SearchWorker:
                 if not candidates and not model_error:
                     model_error = "Ollama did not return a readable answer."
 
-                # Complete immediately after generation; no web request can block or hide it.
+                # Complete immediately after local generation.
                 if model_candidates and not exclusions:
                     self.cache.put(prompt, [], model_candidates)
                 emit(candidates, True, model_error, source)

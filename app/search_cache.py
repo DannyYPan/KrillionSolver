@@ -1,4 +1,4 @@
-"""Thread-safe in-memory TTL cache for web search results."""
+"""Thread-safe in-memory TTL cache for generated answers."""
 
 from __future__ import annotations
 

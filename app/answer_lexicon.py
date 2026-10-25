@@ -1,4 +1,4 @@
-"""Small deterministic local answer sources for constrained prompts."""
+"""Small deterministic local answer lists for constrained prompts."""
 
 from __future__ import annotations
 
@@ -57,6 +57,11 @@ def _country_name(value: str) -> bool:
     return value.casefold() in {country.casefold() for country in _COUNTRIES}
 
 
+def _dictionary_form(value: str) -> str:
+    """Normalize a displayed answer to the form stored in the word lexicon."""
+    return re.sub(r"[^a-z]", "", value.casefold())
+
+
 def prompt_kind(prompt: str) -> tuple[str, str] | None:
     match = _ENDING.search(prompt)
     if match:
@@ -104,36 +109,54 @@ def _qualified_countries(prompt: str, category: str, region: str) -> list[str]:
     return eligible
 
 
-def satisfies_constraint(answer: str, prompt: str) -> bool:
+def candidate_check(answer: str, prompt: str) -> str:
+    """Return ``match``, ``uncertain``, or ``reject`` for a local prompt check.
+
+    A missing dictionary or country entry is uncertain rather than invalid. This
+    prevents the deliberately small local data from hiding plausible model
+    answers while still removing candidates that plainly break a text rule.
+    """
     kind = prompt_kind(prompt)
     if not kind:
-        return True
+        return "uncertain"
     category, value = kind
     if category == "ending":
-        word = re.sub(r"[^a-z]", "", answer.casefold())
-        return bool(word) and word.endswith(value) and len(word) > len(value)
+        word = _dictionary_form(answer)
+        if not word.endswith(value) or len(word) <= len(value):
+            return "reject"
+        return "match" if word in _words() else "uncertain"
     if category == "starting":
-        word = re.sub(r"[^a-z]", "", answer.casefold())
-        return bool(word) and word.startswith(value) and len(word) > len(value)
+        word = _dictionary_form(answer)
+        if not word.startswith(value) or len(word) <= len(value):
+            return "reject"
+        return "match" if word in _words() else "uncertain"
     if category == "contains":
-        word = re.sub(r"[^a-z]", "", answer.casefold())
-        return value in word and word != value
+        word = _dictionary_form(answer)
+        if value not in word or word == value:
+            return "reject"
+        return "match" if word in _words() else "uncertain"
     if category.startswith("country"):
-        return answer.casefold() in {name.casefold() for name in _qualified_countries(prompt, category, value)}
+        qualified = {name.casefold() for name in _qualified_countries(prompt, category, value)}
+        return "match" if answer.casefold() in qualified else "uncertain"
     if category == "compound":
-        word = re.sub(r"[^a-z]", "", answer.casefold())
+        word = _dictionary_form(answer)
         lexicon = _words()
         if not word or value not in word or word == value:
-            return False
+            return "reject"
         for start in (match.start() for match in re.finditer(re.escape(value), word)):
             end = start + len(value)
             left, right = word[:start], word[end:]
             if (not left and right in lexicon) or (not right and left in lexicon) or (left in lexicon and right in lexicon):
-                return True
-        return False
+                return "match"
+        return "uncertain"
     if category == "english_word":
-        return answer.casefold() in _words()
-    return True
+        return "match" if _dictionary_form(answer) in _words() else "uncertain"
+    return "uncertain"
+
+
+def satisfies_constraint(answer: str, prompt: str) -> bool:
+    """Return whether the local data positively confirms a candidate."""
+    return candidate_check(answer, prompt) == "match"
 
 
 def local_candidates(prompt: str, excluded: list[str] | None = None, limit: int = 8) -> list[dict[str, object]]:
@@ -173,13 +196,7 @@ def local_candidates(prompt: str, excluded: list[str] | None = None, limit: int 
     else:
         return []
     excluded_keys = {item.casefold().strip() for item in (excluded or [])}
-    return [{
-        "answer": _DISPLAY_FORMS.get(answer, answer),
-        "evidence": f"Matches the prompt constraint in {source}.",
-        "title": source,
-        "url": "",
-        "sources": [],
-        "evidence_status": "Country list match" if category.startswith("country") else "Dictionary match",
-        "evidence_score": 0,
-        "source_count": 0,
-    } for answer in answers if answer.casefold() not in excluded_keys]
+    return [
+        {"answer": _DISPLAY_FORMS.get(answer, answer)}
+        for answer in answers if answer.casefold() not in excluded_keys
+    ]

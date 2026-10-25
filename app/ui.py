@@ -1,10 +1,9 @@
-"""Compact Tkinter interface for monitoring game prompts and search results."""
+"""Compact Tkinter interface for monitoring prompts and showing local answers."""
 
 from __future__ import annotations
 
 import queue
 import tkinter as tk
-import webbrowser
 from tkinter import ttk
 
 from .background_worker import SearchWorker, result_is_current
@@ -26,8 +25,6 @@ class KrillionSolverApp(tk.Tk):
         self.monitor: BrowserMonitor | None = None
         self.current_prompt = ""
         self.request_id = 0
-        self.sources_expanded = False
-        self.source_count = 0
         self.auto_search = tk.BooleanVar(value=True)
         self.always_on_top = tk.BooleanVar(value=False)
         self.diagnostics = tk.BooleanVar(value=False)
@@ -36,7 +33,6 @@ class KrillionSolverApp(tk.Tk):
         self.browser_status = tk.StringVar(value="Stopped")
         self.search_status = tk.StringVar(value="Waiting for a prompt")
         self.prompt_var = tk.StringVar(value="No prompt detected yet")
-        self.query_var = tk.StringVar(value="")
         self.current_candidates: list[dict] = []
         self.rejected_answers: list[str] = []
         self._build()
@@ -48,7 +44,7 @@ class KrillionSolverApp(tk.Tk):
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(6, weight=1)
+        self.rowconfigure(4, weight=1)
         controls = ttk.Frame(self, padding=10)
         self.controls_frame = controls
         controls.grid(row=0, column=0, sticky="ew")
@@ -70,7 +66,7 @@ class KrillionSolverApp(tk.Tk):
         options = ttk.Frame(self, padding=(10, 0, 10, 6))
         self.options_frame = options
         options.grid(row=1, column=0, sticky="ew")
-        ttk.Checkbutton(options, text="Automatic search", variable=self.auto_search).pack(side="left")
+        ttk.Checkbutton(options, text="Automatic answers", variable=self.auto_search).pack(side="left")
         ttk.Checkbutton(options, text="Diagnostics", variable=self.diagnostics).pack(side="left")
 
         prompt = ttk.LabelFrame(self, text="Detected prompt", padding=8)
@@ -78,23 +74,23 @@ class KrillionSolverApp(tk.Tk):
         prompt.columnconfigure(0, weight=1)
         self.prompt_label = ttk.Label(prompt, textvariable=self.prompt_var, wraplength=590, justify="left")
         self.prompt_label.grid(row=0, column=0, sticky="ew")
-        self.query_label = ttk.Label(prompt, text="Search query")
-        self.query_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
-        self.query_value = ttk.Label(prompt, textvariable=self.query_var, wraplength=590)
-        self.query_value.grid(row=2, column=0, sticky="w")
-        actions = ttk.Frame(self, padding=(10, 4))
+        actions = ttk.Frame(self, padding=(10, 4, 10, 8))
         actions.grid(row=3, column=0, sticky="ew")
-        ttk.Label(actions, textvariable=self.search_status).pack(side="left")
-        ttk.Button(actions, text="Refresh Answer", command=self.refresh_search).pack(side="right")
-        ttk.Button(actions, text="Clear Results", command=self.clear_results).pack(side="right", padx=6)
+        actions.columnconfigure(0, weight=1)
+        ttk.Label(actions, textvariable=self.search_status, anchor="w").grid(
+            row=0, column=0, columnspan=4, sticky="ew", pady=(0, 6)
+        )
+        ttk.Button(actions, text="Refresh Answer", command=self.refresh_search).grid(row=1, column=0, sticky="w")
+        ttk.Button(actions, text="Clear", command=self.clear_results).grid(row=1, column=1, sticky="w", padx=6)
         self.view_button = ttk.Button(actions, text="Compact view", command=self._toggle_compact)
-        self.view_button.pack(side="right", padx=6)
-        ttk.Checkbutton(actions, text="Always on top", variable=self.always_on_top, command=self._top_changed).pack(side="right", padx=6)
+        self.view_button.grid(row=1, column=2, sticky="e", padx=6)
+        ttk.Checkbutton(actions, text="Always on top", variable=self.always_on_top, command=self._top_changed).grid(
+            row=1, column=3, sticky="e"
+        )
 
-        ideas_frame = ttk.LabelFrame(self, text="Answer ideas", padding=6)
+        ideas_frame = ttk.LabelFrame(self, text="Answers", padding=6)
         self.ideas_frame = ideas_frame
-        ideas_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 6))
-        ideas_frame.configure(height=195)
+        ideas_frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=(0, 10))
         ideas_frame.grid_propagate(False)
         ideas_frame.rowconfigure(0, weight=1)
         ideas_frame.columnconfigure(0, weight=1)
@@ -108,24 +104,6 @@ class KrillionSolverApp(tk.Tk):
         self.ideas_inner.bind("<Configure>", lambda _e: self.ideas_canvas.configure(scrollregion=self.ideas_canvas.bbox("all")))
         self.ideas_canvas.bind("<Configure>", lambda e: self.ideas_canvas.itemconfigure(self.ideas_window, width=e.width))
 
-        self.sources_toggle = ttk.Button(self, text="▶ Sources", command=self._toggle_sources)
-        self.sources_toggle.grid(row=5, column=0, sticky="w", padx=12, pady=(0, 4))
-        results_frame = ttk.LabelFrame(self, text="Search sources", padding=6)
-        self.results_frame = results_frame
-        results_frame.grid(row=6, column=0, sticky="nsew", padx=10, pady=(0, 6))
-        results_frame.grid_remove()
-        results_frame.rowconfigure(0, weight=1)
-        results_frame.columnconfigure(0, weight=1)
-        self.results_canvas = tk.Canvas(results_frame, highlightthickness=0, yscrollincrement=48)
-        scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=self.results_canvas.yview)
-        self.results_canvas.configure(yscrollcommand=scrollbar.set)
-        self.results_canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.results_inner = ttk.Frame(self.results_canvas)
-        self.canvas_window = self.results_canvas.create_window((0, 0), window=self.results_inner, anchor="nw")
-        self.results_inner.bind("<Configure>", lambda _e: self.results_canvas.configure(scrollregion=self.results_canvas.bbox("all")))
-        self.results_canvas.bind("<Configure>", lambda e: self.results_canvas.itemconfigure(self.canvas_window, width=e.width))
-
         self.diag_frame = ttk.LabelFrame(self, text="Detection diagnostics", padding=6)
         self.diag_text = tk.Text(self.diag_frame, height=8, wrap="word", state="disabled")
         self.diag_scroll = ttk.Scrollbar(self.diag_frame, orient="vertical", command=self.diag_text.yview)
@@ -137,17 +115,6 @@ class KrillionSolverApp(tk.Tk):
     def _toggle_compact(self) -> None:
         self._set_compact(not self.compact)
 
-    def _toggle_sources(self) -> None:
-        self.sources_expanded = not self.sources_expanded
-        marker = "▼" if self.sources_expanded else "▶"
-        self.sources_toggle.configure(text=f"{marker} Sources ({self.source_count})")
-        if self.sources_expanded:
-            self.results_frame.grid()
-            self.rowconfigure(6, weight=1)
-        else:
-            self.results_frame.grid_remove()
-            self.rowconfigure(6, weight=0)
-
     def _set_compact(self, enabled: bool) -> None:
         if self.compact == enabled:
             return
@@ -155,12 +122,7 @@ class KrillionSolverApp(tk.Tk):
         if enabled:
             self.controls_frame.grid_remove()
             self.options_frame.grid_remove()
-            self.query_label.grid_remove()
-            self.query_value.grid_remove()
-            self.sources_toggle.grid_remove()
-            self.results_frame.grid_remove()
             self.diag_frame.grid_remove()
-            self.rowconfigure(6, weight=0)
             self.rowconfigure(4, weight=1)
             self.ideas_frame.grid_configure(sticky="nsew")
             self.prompt_label.configure(wraplength=350)
@@ -170,14 +132,8 @@ class KrillionSolverApp(tk.Tk):
         else:
             self.controls_frame.grid()
             self.options_frame.grid()
-            self.query_label.grid()
-            self.query_value.grid()
-            self.sources_toggle.grid()
-            if self.sources_expanded:
-                self.results_frame.grid()
-                self.rowconfigure(6, weight=1)
-            self.rowconfigure(4, weight=0)
-            self.ideas_frame.grid_configure(sticky="ew")
+            self.rowconfigure(4, weight=1)
+            self.ideas_frame.grid_configure(sticky="nsew")
             self.prompt_label.configure(wraplength=590)
             self.geometry("650x680")
             self.minsize(520, 460)
@@ -229,7 +185,6 @@ class KrillionSolverApp(tk.Tk):
         self.current_candidates = []
         self.rejected_answers = []
         self.prompt_var.set(prompt)
-        self.query_var.set(prompt.rstrip("?.! "))
         self.request_id += 1
         self.clear_results(reset_scroll=True)
         if self.auto_search.get():
@@ -250,8 +205,7 @@ class KrillionSolverApp(tk.Tk):
             if item.get("answer", "").casefold() == clean_answer.casefold():
                 item = {
                     **item,
-                    "evidence": "Confirmed by you for this prompt.",
-                    "evidence_status": "✓ Added to training data",
+                    "confirmed": True,
                 }
                 found = True
             updated_candidates.append(item)
@@ -259,19 +213,15 @@ class KrillionSolverApp(tk.Tk):
         if not found:
             self.current_candidates.insert(0, {
                 "answer": clean_answer,
-                "evidence": "Previously entered and confirmed by you for this prompt.",
-                "evidence_status": "✓ Added to training data",
-                "evidence_score": 0,
-                "source_count": 0,
-                "sources": [],
+                "confirmed": True,
             })
-        self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith("Searching"))
+        self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith(("Asking", "Generating")))
         self.search_status.set(f"✓ {clean_answer} added to training data")
         return True
 
     def refresh_search(self) -> None:
         if not self.current_prompt:
-            self.search_status.set("No prompt to search")
+            self.search_status.set("No prompt to answer")
             return
         self.request_id += 1
         self.search_worker.request(
@@ -296,18 +246,12 @@ class KrillionSolverApp(tk.Tk):
             self.search_status.set(f"Marked {answer} wrong · saved for the next training run")
 
     def _scroll_results_to_top(self) -> None:
-        """Start each newly detected question at its first answer/source."""
+        """Start each newly detected question at its first answer."""
         self.ideas_canvas.yview_moveto(0)
-        self.results_canvas.yview_moveto(0)
 
     def clear_results(self, reset_scroll: bool = False) -> None:
-        for child in self.results_inner.winfo_children():
-            child.destroy()
         for child in self.ideas_inner.winfo_children():
             child.destroy()
-        self.source_count = 0
-        marker = "▼" if self.sources_expanded else "▶"
-        self.sources_toggle.configure(text=f"{marker} Sources (0)")
         if reset_scroll:
             self._scroll_results_to_top()
             # Repeat after Tkinter recalculates the now-empty canvas layout.
@@ -340,18 +284,13 @@ class KrillionSolverApp(tk.Tk):
                 card, text="✕", width=3,
                 command=lambda answer=candidate["answer"]: self._reject_answer(answer),
             ).pack(side="right", padx=(0, 4))
-            evidence = candidate.get("evidence_status", "Title only · unverified")
-            source_count = candidate.get("source_count", 0)
-            if evidence.startswith("Web mention found") and source_count:
-                evidence += f" · {source_count} source{'s' if source_count != 1 else ''}"
-            elif evidence == "Snippet-supported" and source_count:
-                evidence = f"Snippet-supported · {source_count} independent source{'s' if source_count != 1 else ''}"
-            ttk.Label(self.ideas_inner, text=evidence, foreground="#555").pack(anchor="w", padx=24)
+            if candidate.get("confirmed"):
+                ttk.Label(self.ideas_inner, text="✓ Saved", foreground="#287a3d").pack(anchor="w", padx=24)
 
     def _scroll_canvas_under_pointer(self, event) -> tk.Canvas | None:
         widget = self.winfo_containing(event.x_root, event.y_root)
         while widget is not None:
-            if widget is self.ideas_canvas or widget is self.results_canvas:
+            if widget is self.ideas_canvas:
                 return widget
             widget = getattr(widget, "master", None)
         return None
@@ -378,63 +317,21 @@ class KrillionSolverApp(tk.Tk):
         self.clipboard_append(answer)
         self.search_status.set("Answer copied")
 
-    def _show_evidence(self, item: dict[str, str]) -> None:
-        window = tk.Toplevel(self)
-        window.title(item.get("answer") or item.get("title") or "Search evidence")
-        window.geometry("520x260")
-        window.transient(self)
-        body = ttk.Frame(window, padding=12)
-        body.pack(fill="both", expand=True)
-        ttk.Label(body, text=item.get("answer") or item.get("title", "Source"), font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(body, text=item.get("evidence") or item.get("snippet") or "No snippet was provided.", wraplength=490, justify="left").pack(anchor="w", pady=12)
-        if item.get("url"):
-            ttk.Button(body, text="Open source", command=lambda: webbrowser.open(item["url"])).pack(anchor="w")
-
-    def _render_sources(self, results: list[dict]) -> None:
-        for child in self.results_inner.winfo_children():
-            child.destroy()
-        self.source_count = len(results)
-        self.sources_toggle.configure(text=f"{'▼' if self.sources_expanded else '▶'} Sources ({self.source_count})")
-        for result in results:
-            card = ttk.Frame(self.results_inner, padding=8, relief="ridge")
-            card.pack(fill="x", pady=4)
-            title = ttk.Label(card, text=result["title"], font=("Segoe UI", 10, "bold"), wraplength=560, justify="left")
-            title.pack(anchor="w")
-            providers = result.get("search_providers") or ([result["search_provider"]] if result.get("search_provider") else [])
-            if providers:
-                ttk.Label(card, text=f"Found via {', '.join(providers)}", foreground="#555").pack(anchor="w")
-            if result.get("snippet"):
-                ttk.Label(card, text=result["snippet"], wraplength=560, justify="left").pack(anchor="w", pady=(3, 0))
-            actions = ttk.Frame(card)
-            actions.pack(fill="x", pady=(3, 0))
-            if result["url"]:
-                ttk.Button(actions, text="Open source", command=lambda url=result["url"]: webbrowser.open(url)).pack(side="left")
-        if not results:
-            ttk.Label(self.results_inner, text="No source pages returned.").pack(anchor="w", padx=8, pady=8)
-
     def _render_results(self, payload: dict) -> None:
-        searching = not payload.get("complete", True)
-        self._render_candidates(payload.get("candidates", []), searching=searching)
-        self._render_sources(payload.get("results", []))
+        generating = not payload.get("complete", True)
+        self._render_candidates(payload.get("candidates", []), searching=generating)
         error = payload.get("error")
-        if searching:
+        if generating:
             count = len(payload.get("candidates", []))
-            status = f"Searching… · {count} candidates ready" if count else "Searching…"
-            if error:
-                status += " · one search unavailable"
-            self.search_status.set(status)
+            self.search_status.set(f"Generating… · {count} answers ready" if count else "Generating…")
         elif payload.get("source") == "ollama" and payload.get("candidates"):
-            self.search_status.set("Ollama answer ready · web search skipped")
+            self.search_status.set("Answers ready")
         elif payload.get("source") == "local-fallback" and payload.get("candidates"):
             self.search_status.set("Local dictionary suggestions · Ollama unavailable")
-        elif error and not payload.get("results"):
+        elif error:
             self.search_status.set(error)
-        elif not payload.get("results"):
-            self.search_status.set("No answer returned · check Ollama and its model")
         elif not payload.get("candidates"):
-            self.search_status.set("Pages found · no reliable answer identified")
-        else:
-            self.search_status.set(f"Results ready · {len(payload['candidates'])} candidates · {len(payload['results'])} sources")
+            self.search_status.set("No answer returned · check Ollama and its model")
 
     def _poll_events(self) -> None:
         try:
@@ -458,7 +355,6 @@ class KrillionSolverApp(tk.Tk):
                     self.diag_text.configure(state="disabled")
                 elif kind == "search":
                     if result_is_current(value["request_id"], self.request_id, value["prompt"], self.current_prompt):
-                        self.query_var.set(value["query"])
                         self._render_results(value)
         except queue.Empty:
             pass

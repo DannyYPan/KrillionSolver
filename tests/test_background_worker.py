@@ -7,16 +7,7 @@ from app.background_worker import SearchWorker, result_is_current
 
 
 def _candidate(answer):
-    return {
-        "answer": answer,
-        "evidence": "Suggested by local Ollama.",
-        "title": "Local Ollama suggestion",
-        "url": "",
-        "sources": [],
-        "evidence_status": "Local model suggestion · unverified",
-        "evidence_score": 0,
-        "source_count": 0,
-    }
+    return {"answer": answer}
 
 
 def _complete(events, request_id=1):
@@ -32,12 +23,11 @@ class BackgroundWorkerTests(unittest.TestCase):
         self.assertFalse(result_is_current(3, 3, "old prompt", "new prompt"))
         self.assertTrue(result_is_current(3, 3, "Current?", " current? "))
 
-    def test_ollama_answers_are_emitted_without_waiting_for_web_search(self):
+    def test_ollama_answers_are_emitted(self):
         events = queue.Queue()
         worker = SearchWorker(events)
         with patch("app.background_worker.OLLAMA_MODEL", "test-model"), \
-                patch("app.background_worker.suggest_with_ollama", return_value=[_candidate("Paris")]), \
-                patch("app.search_provider.search") as mock_search:
+                patch("app.background_worker.suggest_with_ollama", return_value=[_candidate("Paris")]):
             worker.request("Name a city", 1)
             payload = _complete(events)
 
@@ -45,7 +35,6 @@ class BackgroundWorkerTests(unittest.TestCase):
         self.assertTrue(payload["complete"])
         self.assertEqual([item["answer"] for item in payload["candidates"]], ["Paris"])
         self.assertEqual(payload["results"], [])
-        mock_search.assert_not_called()
 
     def test_unavailable_ollama_returns_dictionary_fallback_instead_of_crashing(self):
         events = queue.Queue()

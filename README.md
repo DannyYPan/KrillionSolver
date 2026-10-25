@@ -1,90 +1,125 @@
 # KrillionSolver
 
-KrillionSolver is a Windows Tkinter companion that opens a visible Chromium browser, polls the selected game page about once per second, and searches the web with the free `ddgs` package when it detects a prompt. Its main view shows candidate answers with copy buttons; the Sources section expands to show titles, snippets, and links. Snippet-supported candidates are distinguished from title-only unverified suggestions. It never fills in or submits a game answer.
+KrillionSolver is a Windows desktop companion for Krillion and Puffer Party. It opens the selected game in Chromium, detects the current prompt, and streams concise answers from a local Llama 3.1 8B model through Ollama. It does not use web search, AI credits, or a cloud API.
 
-## Setup
+The solver never types or submits an answer. You choose an answer and copy it into the game.
 
-The easiest way to start is to double-click **Run KrillionSolver.bat** in this folder. On first launch it creates a private `.venv`, installs the required packages and Chromium, then starts the app. Later launches start the app directly. It changes to the project folder automatically, so you do not need to run commands from `C:\Windows\System32`.
+## Start the app
 
-If you prefer PowerShell, open it in this project folder and run:
+Double-click **Run KrillionSolver.bat**. The launcher:
+
+1. Changes to the project folder.
+2. Creates `.venv` and installs the app dependencies when needed.
+3. Installs Playwright Chromium when needed.
+4. Starts the local Ollama service.
+5. Loads `krillionsolver:8b` when installed, otherwise `llama3.1:latest`.
+6. Opens KrillionSolver.
+
+You can also launch it from PowerShell in the project folder:
 
 ```powershell
 .\Run KrillionSolver.bat
 ```
 
-Tkinter comes with the standard Windows Python installer. If `tkinter` is missing, repair/reinstall Python with the Tcl/Tk option enabled.
+Tkinter is included with the standard Windows Python installer. Repair Python with the Tcl/Tk option enabled if Tkinter is missing.
 
-## Use
+## Use the overlay window
 
-1. Choose **Krillion** or **Puffer Party**. The defaults are `https://krillion.io/` and `https://krillion.io/party`.
-2. Press **Start**. A visible Chromium window opens. Navigate and play there.
-3. KrillionSolver polls readable page text every second. A detected prompt triggers a search if **Automatic search** is enabled.
-4. Use **Refresh Answer** to ask Ollama again. **Clear Results** clears the displayed candidates and sources. Web search is currently skipped, so Sources will usually be empty.
-5. **Restart** closes and reopens the monitored browser. **Always on top** is optional. **Diagnostics** shows the page text, selected prompt, detection method, current URL, and errors.
+1. Select **Krillion** or **Puffer Party**.
+2. Press **Start**. The app opens a visible Chromium window for the game.
+3. Join or begin a game in that browser.
+4. When a prompt is detected, the solver switches to compact view and starts generating answers.
+5. Scroll through the answer list. Each new prompt automatically returns the list to the top.
 
-Answer generation runs off the Tkinter thread; outdated prompts are ignored, repeated prompt detections do not trigger duplicate requests, and identical concurrent requests are shared. Ollama streams suggestions into the answer list as complete candidates arrive, and the app does not wait for web search. Answers are labeled as unverified model suggestions; sources are empty because the result path skips DDGS. Use **Wrong** beside a candidate to save it as rejected, remove it, and immediately ask Ollama for alternatives that exclude it for the current prompt. Every rejection is used by the next fine-tuning run. When no confirmed replacement exists, training prefers `UNCERTAIN` over the rejected answer; when you add a correct answer, training prefers that correction. Ollama's default request timeout is 60 seconds (`KRILLION_OLLAMA_TIMEOUT_SECONDS` can override it). The app asks Ollama to keep the model loaded for 10 minutes after a request, avoiding reload delays between rounds (`KRILLION_OLLAMA_KEEP_ALIVE` can override this, for example `30m` or `0` to unload immediately). Keeping a model loaded uses memory while Ollama is idle.
+The controls beside each answer are:
 
-Ollama is integrated as the primary answer generator. The launcher starts its local service if needed, then uses the fine-tuned `krillionsolver:8b` tag when installed or falls back to base `llama3.1:latest` (Llama 3.1 8B). If Ollama is unavailable or returns an unreadable answer, the app falls back to clearly labeled local dictionary/country suggestions. The default response timeout is 60 seconds (`KRILLION_OLLAMA_TIMEOUT_SECONDS` can override it). The app asks Ollama to keep the model loaded for 10 minutes after a request, avoiding reload delays between rounds (`KRILLION_OLLAMA_KEEP_ALIVE` can override this, for example `30m` or `0` to unload immediately). Keeping a model loaded uses memory while Ollama is idle. See [training/README.md](training/README.md) for how confirmed and rejected answers become fine-tuning examples and how to rebuild the Ollama model.
+- `⧉` copies the answer.
+- `✓` saves the answer as correct training feedback.
+- `✕` saves the answer as wrong, removes it, and asks Ollama for replacements.
 
-Click `✓` beside a candidate to add that prompt/answer pair to `%LOCALAPPDATA%\KrillionSolver\training_examples.jsonl`. This does not change model weights immediately. To train, use the separate training environment described in [training/README.md](training/README.md), then recreate the Ollama tag from the exported Modelfile. Fine-tuning needs at least 10 examples and can take substantial time and GPU memory. The trainer also imports the old `learned_answers.json` file if it exists; it leaves that file untouched.
+Use **Refresh Answer** to generate another set, **Clear** to empty the list, and **Full view** to show browser settings. **Always on top** keeps the solver above the game window.
 
-Double-click **Train KrillionSolver.bat** for a complete preview of the model settings and data. It requires typing `TRAIN` before it starts the GPU training script.
+The solver is a separate compact desktop window rather than a transparent layer drawn inside the game.
 
-If this computer has no CUDA training GPU, double-click **Prepare Colab Training.bat**, then follow the Google Colab section in [training/README.md](training/README.md). The generated upload ZIP includes the current curated, confirmed, and rejected training data.
+## How answers are checked
 
-### Running it as an overlay
+Ollama generates the main answer list. The local lexicon is actively used before and after generation:
 
-For the simplest launch, double-click **Run KrillionSolver.bat**. It performs first-run setup automatically. Once setup has finished, you can also start the app from PowerShell in the project folder with:
+- It gives Ollama matching dictionary words and countries as hints.
+- It checks English word prompts against the CMU pronunciation dictionary.
+- It enforces starts-with, ends-with, contains, and compound-word conditions.
+- It checks country names, regions, flag colors, coastlines, and the supported population condition.
+- It removes explicit exclusions such as `prototype doesn't count`.
+- It rejects duplicate, malformed, and definite rule-breaking model output.
+
+Local data is used as a ranking aid rather than an absolute answer bank. Confirmed dictionary or country matches appear first. A candidate that follows the prompt but is missing from the local data stays in the list after the confirmed matches, preventing a limited lexicon from hiding a valid rare answer.
+
+When Ollama is unavailable, matching local dictionary or country entries are shown as a fallback. General knowledge categories that the lexicon does not recognize are answered by Ollama directly.
+
+Generation runs outside the Tkinter main thread. Results from an old prompt are ignored, duplicate requests for the same prompt are shared, and successful answers are cached for 10 minutes. Ollama remains loaded for 10 minutes by default to reduce delays between rounds.
+
+Optional environment settings:
+
+- `KRILLION_OLLAMA_TIMEOUT_SECONDS` changes the 60-second response timeout.
+- `KRILLION_OLLAMA_KEEP_ALIVE` changes how long Ollama retains the model, such as `30m` or `0`.
+- `KRILLION_OLLAMA_MODEL` selects a different local model tag.
+
+## Feedback and training
+
+Correct feedback is stored in `%LOCALAPPDATA%\KrillionSolver\training_examples.jsonl`. Wrong feedback is stored in `%LOCALAPPDATA%\KrillionSolver\rejected_answers.jsonl`. Clicking a feedback button records data for the next training run; it does not immediately change the loaded model.
+
+Double-click **Train KrillionSolver.bat** to preview the training configuration and data. Type `TRAIN` when ready. If this computer does not have a compatible CUDA GPU, double-click **Prepare Colab Training.bat** and follow [training/README.md](training/README.md).
+
+After exporting the trained model, create the local Ollama tag from the export directory:
 
 ```powershell
-.\.venv\Scripts\python.exe prompt_assistant.py
+ollama create krillionsolver:8b -f Modelfile
 ```
 
-In the app, choose the game and press **Start**. The app opens its own visible Chromium window; it does not attach to an existing browser tab. When the browser opens, KrillionSolver switches to a compact answer view. Use **Full view** to return to settings and source details. **Always on top** stays in the toolbar in both views. The results are shown in a separate desktop window, not a transparent in-game overlay. The app never types or submits answers.
+The launcher will use that tag the next time it starts.
 
-The main candidates come directly from Ollama. For common constrained categories, the app provides local English dictionary and country-list examples as hints; it recognizes English word starts/ends/contains/compound patterns and country prompts about regions, flags, coastlines, and larger populations. Ollama suggestions are unverified and do not imply game acceptance. Use **Copy** beside a candidate to copy it.
+## Prompt detection
 
-## Game prompt detection status
+The browser monitor reads visible page text about once per second and looks for standalone questions and category instructions. **Diagnostics** shows the current URL, extracted text, selected prompt, detection method, and browser errors.
 
-I opened `https://krillion.io/` and `https://krillion.io/party` in Playwright Chromium and inspected their loaded DOM text. Krillion showed its Daily Dive lobby/depth screen with no active round question. Puffer Party showed its lobby, help text, and public room list, not an active room's category. I could not verify a selector against a live prompt for either mode, so the app does not claim a verified prompt selector. It scans readable body text for standalone question and category instruction patterns (such as “Name a…” and “What…”), filtering common navigation, timer, score, and button text as well as Puffer Party's visible “Name an answer and pass the puffer” instruction. This heuristic may miss prompts rendered only in canvas/images, hidden frames, or differently worded text; it needs tuning against an actual round.
-
-To finish site-specific selector tuning, provide a live round page for each mode with a prompt visible (and, if possible, the relevant prompt element's **Copy selector** value from Chromium DevTools). In Puffer Party, that means a room after a category has appeared; for Krillion, a prompt after a dive begins. If the text is not available in the DOM, a screenshot and confirmation that it is rendered as an image/canvas are useful for deciding whether an optional OCR adapter is needed. Until then, enable **Diagnostics** and confirm that “Selected” matches the prompt before relying on automatic searches.
-
-## Tests
-
-Run the unit tests from the project folder:
-
-```bash
-py -m unittest discover -s tests -v
-```
-
-Tests mock the search service; running them does not make live search requests.
+Detection may need adjustment if a game renders its prompt only in an image or canvas. If a live prompt is missed, open **Diagnostics** and provide the selected text and extracted page text.
 
 ## Troubleshooting
 
-- **Chromium does not launch:** from the project folder, run `.\\.venv\\Scripts\\python.exe -m playwright install chromium`.
-- **Search errors / no search results:** check network connectivity, then use **Refresh Search**. The free search provider may rate-limit requests or fail to respond before the hard timeout; use **Refresh Search** to retry after the provider recovers.
-- **Prompt is missed or unrelated text is selected:** enable **Diagnostics** and review extracted text, selected text, and the method. Send those details with the game mode and a live prompt so the matching adapter can be improved.
-- **Page looks blank:** wait for the site to finish loading. The monitor uses visible Chromium and continues polling; navigation to another URL in that browser tab is monitored too.
+- **No answers appear:** confirm Ollama is running and that `krillionsolver:8b` or `llama3.1:latest` exists. Then press **Refresh Answer**.
+- **Chromium does not launch:** run `.\.venv\Scripts\python.exe -m playwright install chromium` from the project folder.
+- **The wrong text is detected:** enable **Diagnostics** and inspect the selected prompt.
+- **The browser page is blank:** wait for navigation to finish or press **Restart**.
+- **The first answer is slow:** the initial Ollama model load commonly takes longer. Later rounds are faster while the model remains loaded.
+
+## Tests
+
+Run the offline test suite from the project folder:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
 
 ## Project layout
 
 ```text
 prompt_assistant.py
+Run KrillionSolver.bat
 requirements.txt
 app/
-  browser_manager.py
-  prompt_detector.py
-  site_adapters.py
-  search_provider.py
-  ollama_provider.py
   answer_lexicon.py
-  learned_answers.py           # saves confirmed examples for the next fine-tune
-  search_cache.py
   background_worker.py
+  browser_manager.py
+  learned_answers.py
+  ollama_provider.py
+  prompt_constraints.py
+  prompt_detector.py
+  search_cache.py
+  site_adapters.py
   ui.py
 training/
   finetune_krillion.py
   trivia_data.jsonl
+  KrillionSolver_Colab_Training.ipynb
 tests/
 ```

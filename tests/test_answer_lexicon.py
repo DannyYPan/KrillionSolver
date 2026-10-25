@@ -5,8 +5,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from app.answer_lexicon import _words, local_candidates, prompt_kind, satisfies_constraint
-from app.search_provider import extract_candidates
+from app.answer_lexicon import _words, candidate_check, local_candidates, prompt_kind, satisfies_constraint
 from app import learned_answers
 
 
@@ -34,6 +33,15 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertTrue(satisfies_constraint("seafood", "Name a word that contains food"))
         self.assertTrue(satisfies_constraint("prototype", "Name something ending with -type"))
 
+    def test_word_constraints_keep_unknown_matching_text_as_uncertain(self):
+        fake = types.SimpleNamespace(words=lambda: ["prototype", "seafood"])
+        _words.cache_clear()
+        with patch.dict(sys.modules, {"cmudict": fake}):
+            self.assertEqual(candidate_check("nonsensextype", "Name a word ending in -type"), "uncertain")
+            self.assertEqual(candidate_check("foodxyz", "Name a word containing food"), "uncertain")
+            self.assertEqual(candidate_check("dog", "Name a word ending in -type"), "reject")
+        _words.cache_clear()
+
     def test_compound_prompt_without_word_token(self):
         fake = types.SimpleNamespace(words=lambda: ["stop", "watch", "stopwatch", "non", "nonstop"])
         _words.cache_clear()
@@ -55,22 +63,6 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertTrue(satisfies_constraint("France", "Name a European country"))
         self.assertEqual(prompt_kind("Name a European country")[0], "country_region")
         self.assertTrue(local_candidates("Name a European country"))
-
-    def test_web_candidates_must_match_suffix(self):
-        results = extract_candidates([{
-            "title": "Word examples",
-            "snippet": "Examples include cat, hat, and dog.",
-            "url": "https://example.org",
-        }], prompt="What ends in -at?")
-        self.assertEqual([item["answer"] for item in results], ["cat", "hat"])
-
-    def test_headline_noise_is_not_an_answer(self):
-        results = extract_candidates([{
-            "title": "Top listeners this month",
-            "snippet": "What are the top listeners this month?",
-            "url": "https://music.example",
-        }], prompt="Name a music artist")
-        self.assertEqual(results, [])
 
     def test_country_exclusion_applies_to_local_results(self):
         answers = local_candidates("Name a country", excluded=["Afghanistan"])
