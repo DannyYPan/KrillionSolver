@@ -93,7 +93,7 @@ def load_training_dataset(tokenizer) -> Dataset:
 
 
 def load_preference_dataset(tokenizer) -> Dataset | None:
-    """Pair wrong model answers with manually confirmed answers for that prompt."""
+    """Train against rejected answers, preferring a correction or UNCERTAIN."""
     local_app_data = os.environ.get("LOCALAPPDATA")
     user_data_dir = Path(local_app_data) / "KrillionSolver" if local_app_data else None
     if not user_data_dir:
@@ -126,7 +126,8 @@ def load_preference_dataset(tokenizer) -> Dataset | None:
         prompt, rejected = row.get("prompt"), row.get("answer")
         if not isinstance(prompt, str) or not isinstance(rejected, str):
             continue
-        for chosen in confirmed.get(key(prompt), []):
+        chosen_answers = confirmed.get(key(prompt), []) or ["UNCERTAIN"]
+        for chosen in chosen_answers:
             if chosen.casefold() == rejected.casefold():
                 continue
             signature = (key(prompt), chosen.casefold(), rejected.casefold())
@@ -143,7 +144,7 @@ def load_preference_dataset(tokenizer) -> Dataset | None:
             )
             preference_rows.append({
                 "prompt": formatted_prompt,
-                "chosen": f"SAFE: {chosen}\nMORE OPTIONS:",
+                "chosen": (f"SAFE: {chosen}\nMORE OPTIONS:" if chosen != "UNCERTAIN" else "UNCERTAIN"),
                 "rejected": f"SAFE: {rejected.strip()}\nMORE OPTIONS:",
             })
     return Dataset.from_list(preference_rows) if preference_rows else None
@@ -259,7 +260,7 @@ def main() -> None:
         )
         preference_trainer.train()
     else:
-        print("No preference pairs found. To teach a correction, mark an answer wrong and add a confirmed answer for the same prompt.")
+        print("No rejected-answer preferences found.")
 
     print("Exporting quantized GGUF; this needs additional disk/RAM and can take a while.")
     model.save_pretrained_gguf(str(EXPORT_DIR), tokenizer, quantization_method="q4_k_m")

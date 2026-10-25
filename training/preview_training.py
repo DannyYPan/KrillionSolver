@@ -78,17 +78,20 @@ def main() -> None:
         if isinstance(prompt, str) and isinstance(answer, str) and prompt.strip() and answer.strip():
             confirmed_by_prompt.setdefault(_key(prompt), []).append(answer.strip())
 
-    pairs: list[dict[str, object]] = []
-    unpaired: list[dict[str, object]] = []
+    corrected_pairs: list[dict[str, object]] = []
+    rejection_only_pairs: list[dict[str, object]] = []
     for row in rejected:
         prompt, rejected_answer = row.get("prompt"), row.get("answer")
         preferred = confirmed_by_prompt.get(_key(prompt), [])
         usable = [answer for answer in preferred if answer.casefold() != str(rejected_answer).casefold()]
         if usable:
             for answer in usable:
-                pairs.append({"prompt": prompt, "answer": f"PREFER {answer} | REJECT {rejected_answer}"})
+                corrected_pairs.append({"prompt": prompt, "answer": f"PREFER {answer} | REJECT {rejected_answer}"})
         else:
-            unpaired.append(row)
+            rejection_only_pairs.append({
+                "prompt": prompt,
+                "answer": f"PREFER UNCERTAIN | REJECT {rejected_answer}",
+            })
 
     print("KRILLIONSOLVER TRAINING PREVIEW")
     print("=" * 72)
@@ -102,13 +105,13 @@ def main() -> None:
     _display("CURATED SUPERVISED EXAMPLES", curated)
     _display("YOUR CONFIRMED SUPERVISED EXAMPLES", confirmed)
     _display("LEGACY SAVED EXAMPLES", legacy)
-    _display("USABLE WRONG-ANSWER PREFERENCE PAIRS", pairs)
-    _display("REJECTED ANSWERS WITHOUT A CONFIRMED REPLACEMENT (saved, not trained)", unpaired)
+    _display("WRONG ANSWERS WITH CONFIRMED REPLACEMENTS", corrected_pairs)
+    _display("WRONG ANSWERS TRAINED WITHOUT REPLACEMENTS", rejection_only_pairs)
     print("\nSUMMARY")
     print("-" * 72)
     print(f"  Supervised rows available before deduplication: {len(curated) + len(confirmed) + len(legacy)}")
-    print(f"  Preference pairs available: {len(pairs)}")
-    print(f"  Rejections skipped until a correction is supplied: {len(unpaired)}")
+    print(f"  Preference pairs available: {len(corrected_pairs) + len(rejection_only_pairs)}")
+    print(f"  Rejections using UNCERTAIN as the preferred response: {len(rejection_only_pairs)}")
     print("  Training can use substantial GPU memory, RAM, disk space, and time.")
 
 

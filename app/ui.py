@@ -288,7 +288,7 @@ class KrillionSolverApp(tk.Tk):
         self._render_candidates(self.current_candidates, searching=True)
         if self.current_prompt:
             self.refresh_search()
-            self.search_status.set(f"Marked {answer} wrong · saved; add a confirmed answer to train it")
+            self.search_status.set(f"Marked {answer} wrong · saved for the next training run")
 
     def clear_results(self) -> None:
         for child in self.results_inner.winfo_children():

@@ -17,8 +17,14 @@ if errorlevel 1 goto :failed
 
 echo.
 echo Review every item above before training.
-echo Type TRAIN and press Enter to begin. Anything else cancels.
+echo Type TRAIN to begin, EDIT to open the data files, or anything else to cancel.
 set /p "TRAIN_CONFIRM=Confirmation: "
+if /i "%TRAIN_CONFIRM%"=="EDIT" (
+    call "Edit Training Data.bat"
+    echo Run this training launcher again after saving your edits.
+    pause
+    exit /b 0
+)
 if /i not "%TRAIN_CONFIRM%"=="TRAIN" (
     echo Training cancelled. No model files were changed.
     pause
@@ -47,8 +53,14 @@ exit /b 0
 :no_training_environment
 echo.
 echo A separate training environment was not found at .training-venv.
-echo Create one with Python 3.10, 3.11, or 3.12, then install Unsloth for your GPU.
-echo After that, install training\requirements.txt into that environment.
+echo.
+echo 1. Install 64-bit Python 3.12 if it is not already installed.
+echo 2. Open PowerShell in this project folder and run:
+echo    py -3.12 -m venv .training-venv
+echo    .\.training-venv\Scripts\python.exe -m pip install -r training\requirements.txt
+echo 3. Run Train KrillionSolver.bat again.
+echo.
+echo Unsloth is GPU/CUDA-specific. If installation fails, follow its Windows/WSL guide.
 echo See training\README.md for the commands and Unsloth Windows/WSL guidance.
 pause
 exit /b 1
