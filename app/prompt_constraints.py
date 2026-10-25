@@ -11,7 +11,7 @@ def split_prompt_exclusions(prompt: str) -> tuple[str, list[str]]:
     """Return the answerable prompt and any explicitly disallowed answers."""
     patterns = (
         re.compile(rf"\s*\((?P<excluded>[^()]*)\s+{_DOES_NOT_COUNT}\b[^)]*\)\s*$", re.I),
-        re.compile(rf"\s+(?:[—–-]\s+|;\s*|,\s*)(?P<excluded>.+?)\s+{_DOES_NOT_COUNT}\b[^.!?]*[.!?]*$", re.I),
+        re.compile(rf"\s*(?:[—–-]\s+|;\s*|,\s*)(?P<excluded>.+?)\s+{_DOES_NOT_COUNT}\b[^.!?]*[.!?]*$", re.I),
         re.compile(r"\s+\b(?:excluding|except for|except|but not|not including)\s+(?P<excluded>[^.!?;]+)[.!?]*$", re.I),
     )
     core = prompt.strip()
