@@ -36,8 +36,12 @@ if defined KRILLION_TRAINING_PYTHON if exist "%KRILLION_TRAINING_PYTHON%" set "T
 if not defined TRAINING_PYTHON if exist ".training-venv\Scripts\python.exe" set "TRAINING_PYTHON=.training-venv\Scripts\python.exe"
 if not defined TRAINING_PYTHON goto :no_training_environment
 
-"%TRAINING_PYTHON%" -c "import unsloth, datasets, trl" >nul 2>nul
+"%TRAINING_PYTHON%" -c "import datasets, trl" >nul 2>nul
 if errorlevel 1 goto :missing_packages
+"%TRAINING_PYTHON%" -c "import torch, sys; print('PyTorch accelerator available:', torch.cuda.is_available()); sys.exit(0 if torch.cuda.is_available() else 2)"
+if errorlevel 1 goto :no_accelerator
+"%TRAINING_PYTHON%" -c "import unsloth" >nul
+if errorlevel 1 goto :unsloth_error
 
 echo.
 echo Starting Llama 3.1 8B fine-tuning...
@@ -69,6 +73,22 @@ exit /b 1
 echo.
 echo The training environment exists, but Unsloth, datasets, or TRL is missing.
 echo Follow training\README.md to install the GPU-compatible packages, then run this file again.
+pause
+exit /b 1
+
+:no_accelerator
+echo.
+echo The packages are installed, but PyTorch cannot find a CUDA GPU.
+echo Unsloth cannot train Llama 3.1 8B with this CPU-only environment.
+echo If this PC has a supported NVIDIA GPU, install its driver and a matching CUDA PyTorch build.
+echo Otherwise, run training on a GPU notebook or another PC with a supported GPU.
+pause
+exit /b 1
+
+:unsloth_error
+echo.
+echo The GPU was detected, but Unsloth could not start. The detailed error is shown above.
+echo Follow the Windows/WSL installation guide in training\README.md for matching package versions.
 pause
 exit /b 1
 
