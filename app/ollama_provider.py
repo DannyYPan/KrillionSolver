@@ -18,7 +18,7 @@ OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("KRILLION_OLLAMA_TIMEOUT_SECONDS",
 OLLAMA_KEEP_ALIVE = os.environ.get("KRILLION_OLLAMA_KEEP_ALIVE", "10m").strip()
 
 SYSTEM_PROMPT = """You help with fast open-answer trivia. Return concise, directly usable English answers.
-All answers must be English words or names normally written in English. Obey every stated condition and exclusion. Treat supplied dictionary/country examples as hints, not as proof they fit. Give one safe, category-matching candidate first, then alternatives only when confident. Usually use one word or a short proper name per answer. Do not explain or claim game acceptance or rarity is verified. If uncertain, say UNCERTAIN.
+All answers must be complete English words or names normally written in English, never abbreviations, initials, or partial word fragments. Obey every stated condition and exclusion. Treat supplied dictionary/country examples as hints, not as proof they fit. Give one safe, category-matching candidate first, then alternatives only when confident. Usually use one word or a short proper name per answer. Do not explain or claim game acceptance or rarity is verified. If uncertain, say UNCERTAIN.
 Return a short list, starting immediately with SAFE: <one candidate>. Put MORE OPTIONS on a new
 line and list up to ten distinct alternatives separated by commas. Do not repeat an answer."""
 

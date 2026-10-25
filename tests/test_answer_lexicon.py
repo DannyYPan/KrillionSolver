@@ -33,6 +33,11 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertTrue(satisfies_constraint("seafood", "Name a word that contains food"))
         self.assertTrue(satisfies_constraint("prototype", "Name something ending with -type"))
 
+    def test_semantic_with_prompt_is_not_misread_as_letter_containment(self):
+        prompt = "Name an animal with a shell"
+        self.assertIsNone(prompt_kind(prompt))
+        self.assertEqual(local_candidates(prompt), [])
+
     def test_word_constraints_keep_unknown_matching_text_as_uncertain(self):
         fake = types.SimpleNamespace(words=lambda: ["prototype", "seafood"])
         _words.cache_clear()

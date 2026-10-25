@@ -18,7 +18,14 @@ _REGIONAL_COUNTRIES = {
 _ENDING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:ends?\s+(?:in|with)|ending\s+(?:in|with))\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
 _STARTING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:start(?:s|ing)?\s+(?:with|in)|beginning\s+with)\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
 _COMPOUND = re.compile(r"\bcompound(?:\s+words?)?\b.*?\b(?:with|containing|including|contains?|has)\s+[\"'“”]?([a-z]{2,20})\b", re.I)
-_CONTAINS = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:contains?|containing|includes?|including|with|has)\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
+# Only treat "with" as a spelling constraint when the prompt explicitly asks
+# for a word. This avoids reading semantic prompts such as "animal with a shell"
+# as "a word containing the letter a".
+_CONTAINS = re.compile(
+    r"\bwords?\b.*?\b(?:contains?|containing|includes?|including|with|has)\s+"
+    r"(?:(?:the\s+)?(?:letters?|substring)\s+)?[-\"']?([a-z]{1,20})\b",
+    re.I,
+)
 _ENGLISH_WORD = re.compile(r"\benglish\s+words?\b", re.I)
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
 _SYLLABLE = re.compile(
