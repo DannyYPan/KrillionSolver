@@ -1,0 +1,1 @@
+"""KrillionSolver application components."""
