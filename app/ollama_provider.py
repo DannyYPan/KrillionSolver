@@ -82,6 +82,7 @@ def suggest(
     hints: list[str] | None = None,
     excluded_answers: list[str] | None = None,
     on_update: Callable[[list[dict[str, object]]], None] | None = None,
+    fast: bool = False,
 ) -> list[dict[str, object]]:
     if not OLLAMA_MODEL:
         return []
@@ -92,15 +93,23 @@ def suggest(
         "keep_alive": OLLAMA_KEEP_ALIVE,
         "stream": True,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": (
+                SYSTEM_PROMPT
+                if not fast
+                else "Give one immediate, directly usable answer. Obey every condition and exclusion. "
+                     "Return only: SAFE: <answer>. Do not explain."
+            )},
             {"role": "user", "content": (
                 f"Prompt: {prompt}\n"
                 f"Possible English dictionary/country examples to consider: {', '.join(hints or []) or 'none'}\n"
                 f"Do not suggest these answers: {', '.join(excluded_answers or []) or 'none'}\n"
-                "Return only candidates that satisfy the prompt."
+                + ("Return one answer immediately." if fast else "Return only candidates that satisfy the prompt.")
             )},
         ],
-        "options": {"temperature": 0.2, "num_predict": 160},
+        "options": {
+            "temperature": 0.1 if fast else 0.2,
+            "num_predict": 24 if fast else 160,
+        },
     }).encode("utf-8")
     request = Request(f"{OLLAMA_HOST}/api/chat", data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:

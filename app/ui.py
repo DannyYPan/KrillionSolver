@@ -8,7 +8,7 @@ from tkinter import ttk
 
 from .background_worker import SearchWorker, result_is_current
 from .browser_manager import BrowserMonitor
-from .prompt_detector import normalize_prompt
+from .prompt_detector import find_said_answers, normalize_prompt
 from .learned_answers import reject_answer, remember
 from .site_adapters import ADAPTERS
 
@@ -35,6 +35,7 @@ class KrillionSolverApp(tk.Tk):
         self.prompt_var = tk.StringVar(value="No prompt detected yet")
         self.current_candidates: list[dict] = []
         self.rejected_answers: list[str] = []
+        self.said_answers: list[str] = []
         self._build()
         self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
         self.bind_all("<Button-4>", lambda event: self._route_scroll_button(event, -1), add="+")
@@ -160,6 +161,7 @@ class KrillionSolverApp(tk.Tk):
     def start(self) -> None:
         if self.monitor and self.monitor.is_alive():
             return
+        self._reset_game_session()
         self.monitor = BrowserMonitor(self.site.get(), self.url.get().strip(), self.events)
         self.monitor.start()
 
@@ -167,6 +169,19 @@ class KrillionSolverApp(tk.Tk):
         if self.monitor:
             self.monitor.stop()
             self.browser_status.set("Stopping…")
+        self._reset_game_session()
+
+    def _reset_game_session(self) -> None:
+        """Clear all round-specific state before another game can begin."""
+        self.request_id += 1
+        self.current_prompt = ""
+        self.current_candidates = []
+        self.rejected_answers = []
+        self.said_answers = []
+        self.prompt_var.set("No prompt detected yet")
+        self.search_status.set("Waiting for a prompt")
+        self.search_worker.reset_session()
+        self.clear_results(reset_scroll=True)
 
     def restart(self) -> None:
         self.stop()
@@ -184,6 +199,8 @@ class KrillionSolverApp(tk.Tk):
         self.current_prompt = prompt
         self.current_candidates = []
         self.rejected_answers = []
+        self.said_answers = []
+        self.search_worker.reset_session()
         self.prompt_var.set(prompt)
         self.request_id += 1
         self.clear_results(reset_scroll=True)
@@ -258,8 +275,8 @@ class KrillionSolverApp(tk.Tk):
             self.after_idle(self._scroll_results_to_top)
 
     def _render_candidates(self, candidates: list[dict], searching: bool = False) -> None:
-        rejected = {answer.casefold() for answer in self.rejected_answers}
-        candidates = [item for item in candidates if item.get("answer", "").casefold() not in rejected]
+        hidden = {answer.casefold() for answer in self.rejected_answers + self.said_answers}
+        candidates = [item for item in candidates if item.get("answer", "").casefold() not in hidden]
         self.current_candidates = list(candidates)
         for child in self.ideas_inner.winfo_children():
             child.destroy()
@@ -286,6 +303,25 @@ class KrillionSolverApp(tk.Tk):
             ).pack(side="right", padx=(0, 4))
             if candidate.get("confirmed"):
                 ttk.Label(self.ideas_inner, text="✓ Saved", foreground="#287a3d").pack(anchor="w", padx=24)
+
+    def _remove_said_answers(self, page_text: str, detected_prompt: str | None) -> None:
+        if not self.current_prompt or normalize_prompt(detected_prompt or "") != normalize_prompt(self.current_prompt):
+            return
+        found = find_said_answers(
+            [str(item.get("answer", "")) for item in self.current_candidates],
+            page_text,
+            self.current_prompt,
+        )
+        new_answers = [
+            answer for answer in found
+            if not any(answer.casefold() == existing.casefold() for existing in self.said_answers)
+        ]
+        if not new_answers:
+            return
+        self.said_answers.extend(new_answers)
+        self.search_worker.exclude(self.current_prompt, new_answers)
+        self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith("Generating"))
+        self.search_status.set(f"Removed {len(new_answers)} already-said answer{'s' if len(new_answers) != 1 else ''}")
 
     def _scroll_canvas_under_pointer(self, event) -> tk.Canvas | None:
         widget = self.winfo_containing(event.x_root, event.y_root)
@@ -342,17 +378,20 @@ class KrillionSolverApp(tk.Tk):
                     if str(value).startswith("Open"):
                         self._set_compact(True)
                     elif value in {"Stopped", "Closed"}:
+                        self._reset_game_session()
                         self._set_compact(False)
                 elif kind == "browser-error":
                     self.browser_status.set("Error")
                     self.search_status.set(f"Browser error: {value}")
                 elif kind == "prompt":
                     self._new_prompt(value)
-                elif kind == "diagnostic" and self.diagnostics.get():
-                    self.diag_text.configure(state="normal")
-                    self.diag_text.delete("1.0", "end")
-                    self.diag_text.insert("1.0", f"URL: {value['url']}\nMethod: {value['method']}\nSelected: {value['prompt'] or '(none)'}\nError: {value['error'] or '(none)'}\n\nExtracted page text:\n{value['text']}")
-                    self.diag_text.configure(state="disabled")
+                elif kind == "diagnostic":
+                    self._remove_said_answers(value["text"], value.get("prompt"))
+                    if self.diagnostics.get():
+                        self.diag_text.configure(state="normal")
+                        self.diag_text.delete("1.0", "end")
+                        self.diag_text.insert("1.0", f"URL: {value['url']}\nMethod: {value['method']}\nSelected: {value['prompt'] or '(none)'}\nError: {value['error'] or '(none)'}\n\nExtracted page text:\n{value['text']}")
+                        self.diag_text.configure(state="disabled")
                 elif kind == "search":
                     if result_is_current(value["request_id"], self.request_id, value["prompt"], self.current_prompt):
                         self._render_results(value)

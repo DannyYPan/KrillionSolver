@@ -47,7 +47,7 @@ Ollama generates the main answer list. The local lexicon is actively used before
 
 - It gives Ollama matching dictionary words and countries as hints.
 - It checks English word prompts against the CMU pronunciation dictionary.
-- It enforces starts-with, ends-with, contains, and compound-word conditions.
+- It enforces starts-with, ends-with, contains, compound-word, and syllable-count conditions.
 - It checks country names, regions, flag colors, coastlines, and the supported population condition.
 - It removes explicit exclusions such as `prototype doesn't count`.
 - It rejects duplicate, malformed, and definite rule-breaking model output.
@@ -57,6 +57,12 @@ Local data is used as a ranking aid rather than an absolute answer bank. Confirm
 When Ollama is unavailable, matching local dictionary or country entries are shown as a fallback. General knowledge categories that the lexicon does not recognize are answered by Ollama directly.
 
 Generation runs outside the Tkinter main thread. Results from an old prompt are ignored, duplicate requests for the same prompt are shared, and successful answers are cached for 10 minutes. Ollama remains loaded for 10 minutes by default to reduce delays between rounds.
+
+The solver uses up to five Ollama passes. The first pass is speed-focused: it requests one answer with a very small generation limit so something useful can appear quickly. Passes two through five use the normal multi-answer format and exclude answers already found, allowing the list to grow without duplicates. A new prompt stops further passes for the previous prompt. Set `KRILLION_OLLAMA_PASSES` from `1` to `8` to change the limit.
+
+While a round is active, the solver also compares its candidates with standalone answer rows visible on the game page. Answers that have already been said are removed from the list and excluded from later Ollama passes. This does not record them as wrong training feedback.
+
+The already-said list resets when a new question is detected and whenever the monitored browser starts, stops, or restarts. Answers from an earlier round or game therefore do not carry into the next one.
 
 Optional environment settings:
 

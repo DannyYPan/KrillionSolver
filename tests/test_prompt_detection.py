@@ -1,6 +1,6 @@
 import unittest
 
-from app.prompt_detector import detect_prompt, normalize_prompt
+from app.prompt_detector import detect_prompt, find_said_answers, normalize_prompt
 
 
 class PromptDetectionTests(unittest.TestCase):
@@ -26,6 +26,11 @@ class PromptDetectionTests(unittest.TestCase):
 
     def test_duplicate_normalization(self):
         self.assertEqual(normalize_prompt("  Name a  river! "), normalize_prompt("name a river!"))
+
+    def test_finds_already_said_answer_rows_without_matching_the_prompt(self):
+        page = "Name a city — Paris doesn't count\nAlex: London +20 points\n2. Tokyo\nSubmit"
+        found = find_said_answers(["Paris", "London", "Tokyo", "Rome"], page, "Name a city — Paris doesn't count")
+        self.assertEqual(found, ["London", "Tokyo"])
 
 
 if __name__ == "__main__":

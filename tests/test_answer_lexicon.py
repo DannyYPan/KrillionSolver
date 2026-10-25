@@ -5,7 +5,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from app.answer_lexicon import _words, candidate_check, local_candidates, prompt_kind, satisfies_constraint
+from app.answer_lexicon import _syllable_counts, _words, candidate_check, local_candidates, prompt_kind, satisfies_constraint
 from app import learned_answers
 
 
@@ -50,6 +50,21 @@ class AnswerLexiconTests(unittest.TestCase):
             self.assertTrue(satisfies_constraint("stopwatch", "Name a compound containing stop"))
         _words.cache_clear()
         self.assertIn("stopwatch", [item["answer"] for item in answers])
+
+    def test_syllable_prompts_use_pronunciations(self):
+        fake = types.SimpleNamespace(dict=lambda: {
+            "cat": [["K", "AE1", "T"]],
+            "banana": [["B", "AH0", "N", "AE1", "N", "AH0"]],
+            "computer": [["K", "AH0", "M", "P", "Y", "UW1", "T", "ER0"]],
+        })
+        _syllable_counts.cache_clear()
+        with patch.dict(sys.modules, {"cmudict": fake}):
+            self.assertEqual(prompt_kind("Name a word with three syllables"), ("syllables", "3"))
+            self.assertEqual(candidate_check("banana", "Name a 3-syllable word"), "match")
+            self.assertEqual(candidate_check("cat", "Name a 3-syllable word"), "reject")
+            answers = local_candidates("Name a word with 3 syllables")
+        _syllable_counts.cache_clear()
+        self.assertEqual({item["answer"] for item in answers}, {"banana", "computer"})
 
     def test_compound_prompt_checks_dictionary_components(self):
         fake = types.SimpleNamespace(words=lambda: ["sun", "flower", "sunflower", "sunny", "flowering"])

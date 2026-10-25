@@ -68,7 +68,7 @@ class BackgroundWorkerTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
 
-        def delayed_suggest(prompt, hints=None, excluded_answers=None, on_update=None):
+        def delayed_suggest(prompt, hints=None, excluded_answers=None, on_update=None, fast=False):
             entered.set()
             release.wait(timeout=2)
             return [_candidate("Paris")]
@@ -86,7 +86,26 @@ class BackgroundWorkerTests(unittest.TestCase):
                     results[payload["request_id"]] = payload
 
         self.assertEqual(set(results), {10, 11})
-        self.assertEqual(mock_ollama.call_count, 1)
+        # Both listeners share one generation series. The second pass receives
+        # Paris as an exclusion and stops when the mock adds nothing new.
+        self.assertEqual(mock_ollama.call_count, 2)
+
+    def test_later_passes_append_new_answers_and_exclude_existing_ones(self):
+        events = queue.Queue()
+        worker = SearchWorker(events)
+        returned = iter([[ _candidate("Paris")], [_candidate("Lyon")], []])
+
+        with patch("app.background_worker.OLLAMA_MODEL", "test-model"), \
+                patch("app.background_worker.suggest_with_ollama", side_effect=lambda *args, **kwargs: next(returned)) as mock_ollama:
+            worker.request("Name a city", 1)
+            payload = _complete(events)
+
+        self.assertEqual([item["answer"] for item in payload["candidates"]], ["Paris", "Lyon"])
+        self.assertEqual(mock_ollama.call_count, 3)
+        self.assertTrue(mock_ollama.call_args_list[0].kwargs["fast"])
+        self.assertFalse(mock_ollama.call_args_list[1].kwargs["fast"])
+        self.assertIn("Paris", mock_ollama.call_args_list[1].kwargs["excluded_answers"])
+        self.assertIn("Lyon", mock_ollama.call_args_list[2].kwargs["excluded_answers"])
 
     def test_disabled_ollama_uses_dictionary_fallback(self):
         events = queue.Queue()
@@ -98,6 +117,29 @@ class BackgroundWorkerTests(unittest.TestCase):
         self.assertEqual(payload["source"], "local-fallback")
         self.assertTrue(payload["candidates"])
         self.assertIn("disabled", payload["error"])
+
+    def test_live_page_answers_are_excluded_from_generation(self):
+        events = queue.Queue()
+        worker = SearchWorker(events)
+        worker.exclude("Name a city", ["Paris"])
+        with patch("app.background_worker.OLLAMA_MODEL", "test-model"), \
+                patch("app.background_worker.suggest_with_ollama", return_value=[]) as mock_ollama:
+            worker.request("Name a city", 1)
+            _complete(events)
+
+        self.assertIn("paris", mock_ollama.call_args.kwargs["excluded_answers"])
+
+    def test_new_game_resets_live_page_exclusions(self):
+        events = queue.Queue()
+        worker = SearchWorker(events)
+        worker.exclude("Name a city", ["Paris"])
+        worker.reset_session()
+        with patch("app.background_worker.OLLAMA_MODEL", "test-model"), \
+                patch("app.background_worker.suggest_with_ollama", return_value=[]) as mock_ollama:
+            worker.request("Name a city", 1)
+            _complete(events)
+
+        self.assertNotIn("paris", mock_ollama.call_args.kwargs["excluded_answers"])
 
 
 if __name__ == "__main__":

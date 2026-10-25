@@ -44,6 +44,32 @@ def _clean_lines(extracted_text: str) -> list[str]:
     return [re.sub(r"\s+", " ", line).strip(" \t\u200b") for line in extracted_text.splitlines() if line.strip()]
 
 
+def find_said_answers(answers: list[str], extracted_text: str, prompt: str = "") -> list[str]:
+    """Find candidate answers already displayed as answer rows on the game page.
+
+    Exact standalone rows and simple ``player: answer``/score rows are accepted.
+    The detected prompt line is excluded to avoid treating words in the question
+    as previously submitted answers.
+    """
+    prompt_key = normalize_prompt(prompt)
+    lines = [normalize_prompt(line) for line in _clean_lines(extracted_text)]
+    lines = [line for line in lines if line and line != prompt_key and len(line) <= 120]
+    found: list[str] = []
+    for answer in answers:
+        answer_key = normalize_prompt(answer)
+        if not answer_key:
+            continue
+        escaped = re.escape(answer_key)
+        row = re.compile(
+            rf"^(?:(?:[^:]+):\s*)?(?:[-•*]\s*|\d+[.)]\s*)?{escaped}"
+            rf"(?:\s*(?:\+?\d+\s*(?:points?|pts?)?|✓|correct))?$",
+            re.I,
+        )
+        if any(row.fullmatch(line) for line in lines):
+            found.append(answer)
+    return found
+
+
 def detect_prompt(extracted_text: str, site: str = "krillion") -> Detection:
     """Select a likely standalone prompt line; keep diagnostics when no match exists.
 

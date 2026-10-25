@@ -20,6 +20,11 @@ _STARTING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|someth
 _COMPOUND = re.compile(r"\bcompound(?:\s+words?)?\b.*?\b(?:with|containing|including|contains?|has)\s+[\"'“”]?([a-z]{2,20})\b", re.I)
 _CONTAINS = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:contains?|containing|includes?|including|with|has)\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
 _ENGLISH_WORD = re.compile(r"\benglish\s+words?\b", re.I)
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
+_SYLLABLE = re.compile(
+    r"\b(?P<count>[1-8]|one|two|three|four|five|six|seven|eight)(?:\s*[- ]\s*|\s+)syllables?\b",
+    re.I,
+)
 _COMMON_ENGLISH_WORDS = "apple|bridge|candle|dragon|ember|forest|garden|harbor|island|jacket|kingdom|lantern|meadow|needle|orange|pocket|quartz|river|silver|thunder|umbrella|village|window|yellow|zephyr".split("|")
 _COUNTRY = re.compile(
     r"\b(?:name|give me|list|think of|which|what|any|one)\b.*?\bcountr(?:y|ies)\b"
@@ -53,6 +58,25 @@ def _words() -> set[str]:
         return set(_FALLBACK_WORDS)
 
 
+@lru_cache(maxsize=1)
+def _syllable_counts() -> dict[str, set[int]]:
+    """Load pronunciation-based syllable counts once for fast prompt checks."""
+    try:
+        import cmudict
+        counts: dict[str, set[int]] = {}
+        for word, pronunciations in cmudict.dict().items():
+            clean = _dictionary_form(word)
+            if not clean:
+                continue
+            counts[clean] = {
+                sum(bool(re.search(r"\d", phoneme)) for phoneme in pronunciation)
+                for pronunciation in pronunciations
+            }
+        return counts
+    except (AttributeError, ImportError, OSError):
+        return {}
+
+
 def _country_name(value: str) -> bool:
     return value.casefold() in {country.casefold() for country in _COUNTRIES}
 
@@ -63,6 +87,10 @@ def _dictionary_form(value: str) -> str:
 
 
 def prompt_kind(prompt: str) -> tuple[str, str] | None:
+    syllable = _SYLLABLE.search(prompt)
+    if syllable and re.search(r"\b(?:word|name|something|thing|answer)\b", prompt, re.I):
+        raw_count = syllable.group("count").casefold()
+        return "syllables", str(_NUMBER_WORDS.get(raw_count, int(raw_count) if raw_count.isdigit() else 0))
     match = _ENDING.search(prompt)
     if match:
         return "ending", match.group(1).casefold()
@@ -120,6 +148,11 @@ def candidate_check(answer: str, prompt: str) -> str:
     if not kind:
         return "uncertain"
     category, value = kind
+    if category == "syllables":
+        counts = _syllable_counts().get(_dictionary_form(answer))
+        if not counts:
+            return "uncertain"
+        return "match" if int(value) in counts else "reject"
     if category == "ending":
         word = _dictionary_form(answer)
         if not word.endswith(value) or len(word) <= len(value):
@@ -164,7 +197,14 @@ def local_candidates(prompt: str, excluded: list[str] | None = None, limit: int 
     if not kind:
         return []
     category, value = kind
-    if category == "ending":
+    if category == "syllables":
+        target = int(value)
+        answers = sorted(
+            (word for word, counts in _syllable_counts().items() if target in counts and 3 <= len(word) <= 18),
+            key=lambda word: (len(word), word),
+        )[:limit]
+        source = "CMU pronunciation dictionary"
+    elif category == "ending":
         candidates = [word for word in _words() if word.endswith(value) and len(word) > len(value)]
         # Prefer compact familiar-looking entries; this is a display ordering, not a frequency claim.
         answers = sorted(candidates, key=lambda word: (len(word), word))[:limit]
