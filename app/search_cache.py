@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,7 @@ from .prompt_detector import normalize_prompt
 class CacheEntry:
     expires_at: float
     results: list[dict[str, str]]
+    candidates: list[dict] | None = None
 
 
 class SearchCache:
@@ -32,12 +34,23 @@ class SearchCache:
             if entry.expires_at <= self._clock():
                 del self._entries[key]
                 return None
-            return [dict(item) for item in entry.results]
+            return copy.deepcopy(entry.results)
 
-    def put(self, prompt: str, results: list[dict[str, str]]) -> None:
+    def get_candidates(self, prompt: str) -> list[dict] | None:
+        key = normalize_prompt(prompt)
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            if entry.expires_at <= self._clock():
+                del self._entries[key]
+                return None
+            return copy.deepcopy(entry.candidates) if entry.candidates is not None else None
+
+    def put(self, prompt: str, results: list[dict[str, str]], candidates: list[dict] | None = None) -> None:
         with self._lock:
             self._entries[normalize_prompt(prompt)] = CacheEntry(
-                self._clock() + self.ttl_seconds, [dict(item) for item in results]
+                self._clock() + self.ttl_seconds, copy.deepcopy(results), copy.deepcopy(candidates)
             )
 
     def clear(self) -> None:

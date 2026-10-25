@@ -18,11 +18,14 @@ def result_is_current(request_id: int, current_request_id: int, prompt: str, cur
 
 
 class SearchWorker:
+    FAILURE_COOLDOWN_SECONDS = 60
+
     def __init__(self, events: queue.Queue, cache: SearchCache | None = None) -> None:
         self.events = events
         self.cache = cache or SearchCache()
         self._lock = threading.Lock()
         self._inflight: dict[str, list[int]] = {}
+        self._failure_until: dict[str, float] = {}
 
     def request(self, prompt: str, request_id: int, force: bool = False) -> None:
         key = normalize_prompt(prompt)
@@ -31,25 +34,46 @@ class SearchWorker:
                 if request_id not in self._inflight[key]:
                     self._inflight[key].append(request_id)
                 return
+            retry_at = self._failure_until.get(key, 0.0)
+            if not force and retry_at > time.monotonic():
+                self.events.put(("search", {
+                    "prompt": prompt,
+                    "query": make_query(prompt),
+                    "results": [],
+                    "candidates": [],
+                    "source": "error",
+                    "error": "Search recently failed; use Refresh Search to retry",
+                    "stage": 2,
+                    "complete": True,
+                    "elapsed_seconds": 0.0,
+                    "request_id": request_id,
+                }))
+                return
+            if force:
+                self._failure_until.pop(key, None)
             self._inflight[key] = [request_id]
 
         def work() -> None:
             started_at = time.perf_counter()
+            combined: list[dict[str, str]] = []
             try:
                 cached = None if force else self.cache.get(prompt)
                 if cached is not None:
                     combined, source = cached, "cached"
                     for item in combined:
                         item.setdefault("search_stage", 0)
+                    cached_candidates = self.cache.get_candidates(prompt)
                 else:
                     combined, source = [], "fresh"
+                    cached_candidates = None
 
-                def publish(stage: int, errors: list[str], complete: bool = False) -> None:
+                def publish(stage: int, errors: list[str], complete: bool = False, candidates: list[dict] | None = None) -> None:
+                    candidates = candidates if candidates is not None else extract_candidates(combined, prompt)
                     payload = {
                         "prompt": prompt,
                         "query": make_query(prompt, stage),
                         "results": list(combined),
-                        "candidates": extract_candidates(combined),
+                        "candidates": candidates,
                         "source": "error" if not combined and errors else source,
                         "error": "; ".join(errors) or None,
                         "stage": stage,
@@ -66,7 +90,7 @@ class SearchWorker:
                     cached_stages = {int(item.get("search_stage", 0)) for item in combined}
                     if not cached_stages:
                         cached_stages = {0}
-                    publish(max(cached_stages), [], complete=cached_stages.issuperset({0, 1, 2}))
+                    publish(max(cached_stages), [], complete=cached_stages.issuperset({0, 1, 2}), candidates=cached_candidates)
                     stages = [stage for stage in (1, 2) if stage not in cached_stages]
                 else:
                     stages = [0, 1, 2]
@@ -88,7 +112,7 @@ class SearchWorker:
                             except Exception as exc:
                                 stage_errors[0] = f"{type(exc).__name__}: {exc}"
                             if combined:
-                                self.cache.put(prompt, combined)
+                                self.cache.put(prompt, combined, extract_candidates(combined, prompt))
                             publish(0, list(stage_errors.values()), complete=not pending)
 
                         finished = set()
@@ -103,10 +127,14 @@ class SearchWorker:
                             all_done = len(finished) == len(pending)
                             publish(stage, list(stage_errors.values()), complete=all_done)
 
-                if source == "fresh" and combined:
-                    self.cache.put(prompt, combined)
+                if combined:
+                    self.cache.put(prompt, combined, extract_candidates(combined, prompt))
             finally:
                 with self._lock:
+                    if not combined:
+                        self._failure_until[key] = time.monotonic() + self.FAILURE_COOLDOWN_SECONDS
+                    else:
+                        self._failure_until.pop(key, None)
                     self._inflight.pop(key, None)
 
         threading.Thread(target=work, name="web-search", daemon=True).start()

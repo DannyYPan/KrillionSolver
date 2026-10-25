@@ -1,6 +1,6 @@
 # KrillionSolver
 
-KrillionSolver is a Windows Tkinter companion that opens a visible Chromium browser, polls the selected game page about once per second, and searches the web with the free `ddgs` package when it detects a prompt. Its compact answer list only includes ideas extracted from explicit examples in result snippets; source details are available on demand. It never fills in or submits a game answer.
+KrillionSolver is a Windows Tkinter companion that opens a visible Chromium browser, polls the selected game page about once per second, and searches the web with the free `ddgs` package when it detects a prompt. Its main view shows candidate answers with copy buttons; the Sources section expands to show titles, snippets, and links. Snippet-supported candidates are distinguished from title-only unverified suggestions. It never fills in or submits a game answer.
 
 ## Setup
 
@@ -19,10 +19,10 @@ Tkinter comes with the standard Windows Python installer. If `tkinter` is missin
 1. Choose **Krillion** or **Puffer Party**. The defaults are `https://krillion.io/` and `https://krillion.io/party`.
 2. Press **Start**. A visible Chromium window opens. Navigate and play there.
 3. KrillionSolver polls readable page text every second. A detected prompt triggers a search if **Automatic search** is enabled.
-4. Use **Refresh Search** to search the current prompt again. **Clear Results** clears the displayed cards. Search results link to their sources.
+4. Use **Refresh Search** to search the current prompt again. **Clear Results** clears the displayed candidates and sources. Expand **Sources** to review page titles, snippets, and links.
 5. **Restart** closes and reopens the monitored browser. **Always on top** is optional. **Diagnostics** shows the page text, selected prompt, detection method, current URL, and errors.
 
-Searches run on background threads; the UI accepts results only for its currently selected prompt/request. Three searches run in parallel: broad examples, unusual examples, and rare/lesser-known examples. Broad answers are displayed first as soon as that search finishes; unusual and rare ideas are added as their searches complete. Each request uses DDGS auto mode with a two-second per-request HTTP timeout and a 3.5-second hard limit. A slow search reports a timeout without removing ideas already found. Successful results are cached in memory for 10 minutes. Search failures and empty results are shown without crashing the UI.
+Searches run off the Tkinter thread; outdated prompt results are ignored, repeated prompt detections do not trigger new searches, and identical concurrent requests are shared. Three complementary DDGS queries run concurrently against the Bing backend with four results per query, a ten-second HTTP timeout, and a 30-second request limit. The client uses a certificate bundle rather than relying on the Windows user certificate store. Candidate names are extracted deterministically from titles and snippets, deduplicated, and ranked by snippet support from independent domains, query relevance, and broad-to-niche search stage. The cache stores successful pages and extracted candidates for 10 minutes. Defaults can be configured with `KRILLION_SEARCH_TIMEOUT_SECONDS`, `KRILLION_SEARCH_WALL_TIMEOUT_SECONDS`, `KRILLION_SEARCH_RESULTS_PER_QUERY`, and `KRILLION_DDGS_BACKEND`. Failed searches are not automatically retried; a 60-second cooldown prevents repeated automatic attempts, while **Refresh Search** retries immediately.
 
 ### Running it as an overlay
 
@@ -34,7 +34,7 @@ For the simplest launch, double-click **Run KrillionSolver.bat**. It performs fi
 
 In the app, choose the game and press **Start**. The app opens its own visible Chromium window; it does not attach to an existing browser tab. When the browser opens, KrillionSolver switches to a compact answer view. Use **Full view** to return to settings and source details. Select **Always on top** in full view to keep the results window above the game. It is a separate desktop window, not a transparent in-game overlay. The app never types or submits answers.
 
-The **Answer ideas** list is built conservatively from explicit example lists or numbered entries in snippets; article titles are never treated as answers. Broad examples appear first; parallel unusual and rare searches add increasingly niche ideas as they finish. Select **Source details** beside an idea to read its supporting snippet and open the source. This ordering reflects search relevance only: it cannot establish that an answer is in the game's bank, is accepted, or earns a rare score. Check each linked source before using an idea. If snippets do not clearly support an answer, it is omitted.
+Candidate names come from explicit lists or numbered entries in snippets and short entity-like headings in titles. A snippet-supported label means a source snippet contains the candidate; it does not verify game acceptance or rarity. Title-only suggestions are labeled unverified. Expand **Sources** for the titles, brief snippets, and links. Use **Copy** beside a candidate to copy it. If the available evidence does not identify a reliable answer, the app says so instead of inventing one.
 
 ## Game prompt detection status
 

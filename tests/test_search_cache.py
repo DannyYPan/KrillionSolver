@@ -19,6 +19,14 @@ class SearchCacheTests(unittest.TestCase):
         found[0]["title"] = "changed"
         self.assertEqual(cache.get("prompt")[0]["title"], "A")
 
+    def test_caches_and_copies_extracted_candidates(self):
+        cache = SearchCache()
+        candidates = [{"answer": "Lake Vostok", "sources": [{"url": "https://example.org"}]}]
+        cache.put("Name a lake", [{"title": "Lakes"}], candidates)
+        found = cache.get_candidates(" name a lake ")
+        found[0]["sources"][0]["url"] = "changed"
+        self.assertEqual(cache.get_candidates("Name a lake")[0]["sources"][0]["url"], "https://example.org")
+
 
 if __name__ == "__main__":
     unittest.main()
