@@ -1,4 +1,4 @@
-"""Optional local Ollama suggestions; candidates remain unverified guesses."""
+"""Local Ollama answer generation and tolerant parsing of concise responses."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ from .search_provider import split_prompt_exclusions
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("KRILLION_OLLAMA_MODEL", "krillion-fast").strip()
-OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("KRILLION_OLLAMA_TIMEOUT_SECONDS", "20"))
+OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("KRILLION_OLLAMA_TIMEOUT_SECONDS", "60"))
+OLLAMA_KEEP_ALIVE = os.environ.get("KRILLION_OLLAMA_KEEP_ALIVE", "10m").strip()
 
 SYSTEM_PROMPT = """You help with fast open-answer trivia. Return concise, directly usable English answers.
 All answers must be English words or names normally written in English. Obey every stated condition and exclusion. Treat supplied dictionary/country examples as hints, not as proof they fit. Give one safe, category-matching candidate first, then up to four alternatives only when confident. Usually use one word or a short proper name per answer. Do not explain or claim game acceptance or rarity is verified. If uncertain, say UNCERTAIN.
@@ -37,6 +38,27 @@ def parse_suggestions(text: str, prompt: str) -> list[dict[str, object]]:
         if match:
             lines[match.group(1).casefold()] = match.group(2)
     ordered = _parts(lines.get("safe", ""))[:1] + _parts(lines.get("more options", ""))[:4]
+    if not ordered:
+        # Some locally created Ollama tags ignore the requested labels. Accept
+        # a short direct answer (or short answer list) instead of dropping it.
+        plain = []
+        for line in text.splitlines():
+            line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
+            lead = re.match(r"^(?:the\s+)?(?:answer|candidate)\s*(?::|\bis\b)\s*:?[ \t]*(.+)$", line, re.I)
+            if not lead:
+                lead = re.match(r"^(?:a good answer|one answer)\s+is\s+(.+)$", line, re.I)
+            if lead:
+                line = lead.group(1).strip()
+            else:
+                line = line.strip(" .;:")
+                if re.search(r"\b(?:maybe|probably|perhaps|i think|is|are|because|since|as an ai)\b", line, re.I):
+                    continue
+            if not line or len(line) > 100 or re.search(r"\b(?:as an ai|i cannot|i can't|here is why)\b", line, re.I):
+                continue
+            if len(line.split()) > 5:
+                continue
+            plain.extend(_parts(line))
+        ordered = plain[:5]
     seen: set[str] = set()
     results = []
     for answer in ordered:
@@ -62,6 +84,9 @@ def suggest(prompt: str, hints: list[str] | None = None) -> list[dict[str, objec
         return []
     body = json.dumps({
         "model": OLLAMA_MODEL,
+        # Ollama otherwise unloads an idle model after its default keep-alive
+        # period, making the next prompt pay the model-load delay again.
+        "keep_alive": OLLAMA_KEEP_ALIVE,
         "stream": False,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},

@@ -91,7 +91,7 @@ class KrillionSolverApp(tk.Tk):
         actions = ttk.Frame(self, padding=(10, 4))
         actions.grid(row=3, column=0, sticky="ew")
         ttk.Label(actions, textvariable=self.search_status).pack(side="left")
-        ttk.Button(actions, text="Refresh Search", command=self.refresh_search).pack(side="right")
+        ttk.Button(actions, text="Refresh Answer", command=self.refresh_search).pack(side="right")
         ttk.Button(actions, text="Clear Results", command=self.clear_results).pack(side="right", padx=6)
         self.view_button = ttk.Button(actions, text="Compact view", command=self._toggle_compact)
         self.view_button.pack(side="right", padx=6)
@@ -239,7 +239,7 @@ class KrillionSolverApp(tk.Tk):
         self.clear_results()
         if self.auto_search.get():
             self.search_worker.request(prompt, self.request_id)
-            self.search_status.set("Searching…")
+            self.search_status.set("Asking Ollama…")
 
     def _remember_answer(self) -> None:
         answer = self.learned_answer_var.get()
@@ -268,7 +268,7 @@ class KrillionSolverApp(tk.Tk):
             return
         self.request_id += 1
         self.search_worker.request(self.current_prompt, self.request_id, force=True)
-        self.search_status.set("Refreshing search…")
+        self.search_status.set("Asking Ollama again…")
 
     def clear_results(self) -> None:
         for child in self.results_inner.winfo_children():
@@ -284,7 +284,7 @@ class KrillionSolverApp(tk.Tk):
         for child in self.ideas_inner.winfo_children():
             child.destroy()
         if not candidates:
-            message = "Searching for evidence-supported candidates…" if searching else "No reliable answer could be identified from the available evidence."
+            message = "Waiting for Ollama's answer…" if searching else "No answer was returned. Check that Ollama is running and the configured model is installed."
             ttk.Label(self.ideas_inner, text=message).pack(anchor="w", padx=6, pady=6)
             return
         for number, candidate in enumerate(candidates, start=1):
@@ -376,10 +376,14 @@ class KrillionSolverApp(tk.Tk):
             if error:
                 status += " · one search unavailable"
             self.search_status.set(status)
+        elif payload.get("source") == "ollama" and payload.get("candidates"):
+            self.search_status.set("Ollama answer ready · web search skipped")
+        elif payload.get("source") == "local-fallback" and payload.get("candidates"):
+            self.search_status.set("Local dictionary suggestions · Ollama unavailable")
         elif error and not payload.get("results"):
-            self.search_status.set("Answers ready · web search unavailable" if payload.get("candidates") else "Search unavailable")
+            self.search_status.set(error)
         elif not payload.get("results"):
-            self.search_status.set("No results found")
+            self.search_status.set("No answer returned · check Ollama and its model")
         elif not payload.get("candidates"):
             self.search_status.set("Pages found · no reliable answer identified")
         else:

@@ -67,17 +67,17 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
     match = _COMPOUND.search(prompt)
     if match:
         return "compound", next(value for value in match.groups() if value).casefold()
-    match = _CONTAINS.search(prompt)
-    if match:
-        return "contains", match.group(1).casefold()
-    if _ENGLISH_WORD.search(prompt):
-        return "english_word", ""
     if _COUNTRY.search(prompt):
         region = _REGION.search(prompt)
         if region:
             region_name = region.group(0).casefold().replace("in ", "").replace("north american", "north america").replace("south american", "south america").replace("oceanian", "oceania").replace("european", "europe").replace("asian", "asia").replace("african", "africa")
             return "country_region", region_name
         return "country", ""
+    match = _CONTAINS.search(prompt)
+    if match:
+        return "contains", match.group(1).casefold()
+    if _ENGLISH_WORD.search(prompt):
+        return "english_word", ""
     return None
 
 
