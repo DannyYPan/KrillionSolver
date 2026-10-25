@@ -1,10 +1,9 @@
-"""Persistent answers explicitly confirmed by the user for a prompt."""
+"""Store user-confirmed answers as examples for the next Ollama fine-tune."""
 
 from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
 from pathlib import Path
 
@@ -13,53 +12,52 @@ from .prompt_detector import normalize_prompt
 _lock = threading.Lock()
 
 
-def _store_path() -> Path:
+def _training_path() -> Path:
     base = os.environ.get("LOCALAPPDATA")
     root = Path(base) if base else Path.home() / ".local" / "share"
-    return root / "KrillionSolver" / "learned_answers.json"
+    return root / "KrillionSolver" / "training_examples.jsonl"
 
 
-def _read() -> dict[str, list[str]]:
+def _rows() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
     try:
-        raw = json.loads(_store_path().read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            return {}
-        return {str(key): list(dict.fromkeys(str(value) for value in values if isinstance(value, str)))
-                for key, values in raw.items() if isinstance(values, list)}
-    except (OSError, ValueError, TypeError):
-        return {}
+        with _training_path().open(encoding="utf-8") as data_file:
+            for line in data_file:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and isinstance(row.get("prompt"), str) and isinstance(row.get("answer"), str):
+                    rows.append({"prompt": row["prompt"], "answer": row["answer"]})
+    except OSError:
+        pass
+    return rows
 
 
 def get_learned(prompt: str, excluded: list[str] | None = None) -> list[str]:
+    """Compatibility reader for training examples; the live solver does not call this."""
     key = normalize_prompt(prompt)
     excluded_keys = {value.casefold().strip() for value in (excluded or [])}
     with _lock:
-        answers = _read().get(key, [])
-    return [answer for answer in answers if answer.casefold().strip() not in excluded_keys]
+        answers = [row["answer"] for row in _rows() if normalize_prompt(row["prompt"]) == key]
+    return list(dict.fromkeys(answer for answer in answers if answer.casefold().strip() not in excluded_keys))
 
 
 def remember(prompt: str, answer: str) -> bool:
-    """Save an explicitly user-confirmed answer, returning False for invalid input."""
-    key = normalize_prompt(prompt)
-    answer = " ".join(answer.split())
-    if not key or not answer or len(answer) > 100 or any(ord(char) < 32 for char in answer):
+    """Append a manually confirmed answer to the fine-tuning corpus."""
+    clean_prompt = " ".join(prompt.split())
+    clean_answer = " ".join(answer.split())
+    if (not normalize_prompt(clean_prompt) or not clean_answer or len(clean_answer) > 100
+            or any(ord(char) < 32 for char in clean_answer)):
         return False
+    key = (normalize_prompt(clean_prompt), clean_answer.casefold())
     with _lock:
-        data = _read()
-        values = data.setdefault(key, [])
-        if any(value.casefold() == answer.casefold() for value in values):
+        if any((normalize_prompt(row["prompt"]), row["answer"].casefold()) == key for row in _rows()):
             return True
-        values.append(answer)
-        path = _store_path()
+        path = _training_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary_name = tempfile.mkstemp(prefix="learned-", suffix=".json", dir=path.parent)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as file:
-                json.dump(data, file, ensure_ascii=False, indent=2)
-            Path(temporary_name).replace(path)
-        finally:
-            try:
-                Path(temporary_name).unlink(missing_ok=True)
-            except OSError:
-                pass
+        with path.open("a", encoding="utf-8", newline="\n") as data_file:
+            data_file.write(json.dumps({"prompt": clean_prompt, "answer": clean_answer}, ensure_ascii=False) + "\n")
+            data_file.flush()
+            os.fsync(data_file.fileno())
     return True

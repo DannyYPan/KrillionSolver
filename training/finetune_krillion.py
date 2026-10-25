@@ -49,7 +49,23 @@ def load_training_dataset(tokenizer) -> Dataset:
                 raise ValueError(f"Invalid prompt/answer on {DATA_FILE.name}:{line_number}")
             rows.append((prompt.strip(), answer.strip()))
     local_app_data = os.environ.get("LOCALAPPDATA")
-    learned_file = Path(local_app_data) / "KrillionSolver" / "learned_answers.json" if local_app_data else None
+    user_data_dir = Path(local_app_data) / "KrillionSolver" if local_app_data else None
+    training_file = user_data_dir / "training_examples.jsonl" if user_data_dir else None
+    if training_file and training_file.is_file():
+        try:
+            for line_number, line in enumerate(training_file.read_text(encoding="utf-8").splitlines(), start=1):
+                if not line.strip():
+                    continue
+                example = json.loads(line)
+                prompt, answer = example.get("prompt"), example.get("answer")
+                if isinstance(prompt, str) and prompt.strip() and isinstance(answer, str) and answer.strip():
+                    rows.append((prompt.strip(), f"SAFE: {answer.strip()}\nMORE OPTIONS:"))
+                else:
+                    print(f"Skipping invalid training example on line {line_number}.")
+        except (OSError, ValueError) as exc:
+            print(f"Could not load confirmed training examples ({exc}); continuing with the curated dataset.")
+    # Import feedback created by older app versions without deleting the original file.
+    learned_file = user_data_dir / "learned_answers.json" if user_data_dir else None
     if learned_file and learned_file.is_file():
         try:
             learned = json.loads(learned_file.read_text(encoding="utf-8"))
@@ -59,7 +75,7 @@ def load_training_dataset(tokenizer) -> Dataset:
                         if isinstance(answer, str) and answer.strip():
                             rows.append((f"Category: {prompt}\nUse the confirmed answer first; give no unsupported alternatives.", f"SAFE: {answer.strip()}\nMORE OPTIONS:"))
         except (OSError, ValueError) as exc:
-            print(f"Could not load saved confirmed answers ({exc}); continuing with the JSONL dataset.")
+            print(f"Could not import legacy saved answers ({exc}); continuing with the training JSONL data.")
     rows = list(dict.fromkeys(rows))
     if len(rows) < 10:
         raise ValueError("Add at least 10 reviewed examples before training; tiny datasets overfit quickly.")

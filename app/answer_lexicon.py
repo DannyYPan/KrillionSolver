@@ -15,11 +15,17 @@ _REGIONAL_COUNTRIES = {
     "oceania": set("Australia|Fiji|Kiribati|Marshall Islands|Micronesia|Nauru|New Zealand|Palau|Papua New Guinea|Samoa|Solomon Islands|Tonga|Tuvalu|Vanuatu".split("|")),
 }
 
-_ENDING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:ends?\s+(?:in|with)|ending\s+(?:in|with))\s+[-\"'“”]?([a-z]{1,20})\b", re.I)
-_STARTING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:start(?:s|ing)?\s+(?:with|in)|beginning\s+with)\s+[-\"'“”]?([a-z]{1,20})\b", re.I)
+_ENDING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:ends?\s+(?:in|with)|ending\s+(?:in|with))\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
+_STARTING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:start(?:s|ing)?\s+(?:with|in)|beginning\s+with)\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
 _COMPOUND = re.compile(r"\bcompound(?:\s+words?)?\b.*?\b(?:with|containing|including|contains?|has)\s+[\"'“”]?([a-z]{2,20})\b", re.I)
-_CONTAINS = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:contains?|containing|includes?|including)\s+[-\"'“”]?([a-z]{1,20})\b", re.I)
-_COUNTRY = re.compile(r"\b(?:name|give me|list|think of)\b.*?\bcountr(?:y|ies)\b", re.I)
+_CONTAINS = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:contains?|containing|includes?|including|with|has)\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
+_ENGLISH_WORD = re.compile(r"\benglish\s+words?\b", re.I)
+_COMMON_ENGLISH_WORDS = "apple|bridge|candle|dragon|ember|forest|garden|harbor|island|jacket|kingdom|lantern|meadow|needle|orange|pocket|quartz|river|silver|thunder|umbrella|village|window|yellow|zephyr".split("|")
+_COUNTRY = re.compile(
+    r"\b(?:name|give me|list|think of|which|what|any|one)\b.*?\bcountr(?:y|ies)\b"
+    r"|\bcountr(?:y|ies)\b.{0,100}\b(?:with|whose|that|in|on|above|over|under|near)\b",
+    re.I,
+)
 _REGION = re.compile(r"\b(?:european|asian|african|north american|south american|oceanian|in europe|in asia|in africa|in north america|in south america|in oceania)\b", re.I)
 _FLAG_COLORS = {
     "red": "Canada|China|France|Germany|India|Indonesia|Italy|Japan|Mexico|Netherlands|Norway|Poland|Portugal|Russia|Spain|Sweden|Switzerland|Turkey|United Kingdom|United States|Vietnam",
@@ -30,11 +36,11 @@ _FLAG_COLORS = {
     "black": "Belgium|Germany|Jamaica|South Africa",
 }
 _LANDLOCKED = set("Afghanistan|Armenia|Austria|Azerbaijan|Belarus|Bhutan|Bolivia|Botswana|Burkina Faso|Burundi|Central African Republic|Chad|Czechia|Eswatini|Ethiopia|Hungary|Kazakhstan|Kyrgyzstan|Laos|Lesotho|Liechtenstein|Luxembourg|Malawi|Mali|Moldova|Mongolia|Nepal|Niger|North Macedonia|Paraguay|Rwanda|San Marino|Serbia|Slovakia|South Sudan|Switzerland|Tajikistan|Turkmenistan|Uganda|Uzbekistan|Vatican City|Zambia|Zimbabwe".split("|"))
-_SMALL_POPULATION = set("Andorra|Antigua and Barbuda|Dominica|Grenada|Kiribati|Liechtenstein|Marshall Islands|Monaco|Nauru|Palau|Saint Kitts and Nevis|Saint Lucia|San Marino|Samoa|Seychelles|Tonga|Tuvalu|Vatican City".split("|"))
+_SMALL_POPULATION = set("Andorra|Antigua and Barbuda|Dominica|Kiribati|Liechtenstein|Marshall Islands|Monaco|Nauru|Palau|Saint Kitts and Nevis|San Marino|Seychelles|Tuvalu|Vatican City".split("|"))
 _COMMON_COUNTRIES = "United States|Canada|China|India|Brazil|Australia|Japan|Germany|France|Italy|Mexico|United Kingdom|Spain|South Korea|South Africa|Argentina|New Zealand|Sweden|Norway|Switzerland".split("|")
 _FALLBACK_WORDS = set("""prototype stereotype archetype genotype phenotype subtype bloodtype prototype textile stereotype sea food seafood dogfood catfood fastfood junkfood soulfood brainfood foodtruck
 stop watch stopwatch stoplight stopgap stopover stopcock stopword non nonstop bus busstop laptop laptopcase flower sunflower football snowball airport airplane raincoat overcoat breakfast bookshelfs bookshelf toothbrush toothpaste firehouse lighthouse lighthouse keeper
-""".split())
+""".split()) | set(_COMMON_ENGLISH_WORDS)
 _DISPLAY_FORMS = {"foodtruck": "food truck", "busstop": "bus stop"}
 
 
@@ -64,6 +70,8 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
     match = _CONTAINS.search(prompt)
     if match:
         return "contains", match.group(1).casefold()
+    if _ENGLISH_WORD.search(prompt):
+        return "english_word", ""
     if _COUNTRY.search(prompt):
         region = _REGION.search(prompt)
         if region:
@@ -76,8 +84,8 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
 def _qualified_countries(prompt: str, category: str, region: str) -> list[str]:
     eligible = list(_COUNTRIES)
     lowered = prompt.casefold()
-    if "coast" in lowered or "coastal" in lowered or "shoreline" in lowered:
-        if re.search(r"\b(?:no|without|lack(?:s|ing)?)\b.{0,30}\b(?:coast|coastal|shoreline)", lowered):
+    if "coast" in lowered or "coastal" in lowered or "shoreline" in lowered or "landlocked" in lowered:
+        if "landlocked" in lowered or re.search(r"\b(?:no|without|lack(?:s|ing)?)\b.{0,30}\b(?:coast|coastal|shoreline)", lowered):
             eligible = [name for name in eligible if name in _LANDLOCKED]
         else:
             eligible = [name for name in eligible if name not in _LANDLOCKED]
@@ -123,6 +131,8 @@ def satisfies_constraint(answer: str, prompt: str) -> bool:
             if (not left and right in lexicon) or (not right and left in lexicon) or (left in lexicon and right in lexicon):
                 return True
         return False
+    if category == "english_word":
+        return answer.casefold() in _words()
     return True
 
 
@@ -154,6 +164,12 @@ def local_candidates(prompt: str, excluded: list[str] | None = None, limit: int 
         priority = {name: index for index, name in enumerate(_COMMON_COUNTRIES)}
         answers = sorted(country_source, key=lambda name: (priority.get(name, len(priority)), name))[:limit]
         source = "Local country list"
+    elif category == "english_word":
+        words = _words()
+        answers = [word for word in _COMMON_ENGLISH_WORDS if word in words][:limit]
+        if len(answers) < limit:
+            answers.extend(word for word in sorted(words) if word not in answers and len(word) >= 4 and len(answers) < limit)
+        source = "English pronunciation dictionary"
     else:
         return []
     excluded_keys = {item.casefold().strip() for item in (excluded or [])}

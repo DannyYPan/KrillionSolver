@@ -347,6 +347,7 @@ def search(
     max_results: int = SEARCH_RESULTS_PER_QUERY,
     niche_level: int = 0,
     backend: str | None = None,
+    query: str | None = None,
 ) -> list[dict[str, str]]:
     """Search with a hard wall-clock deadline, even if DDGS tries slow engines."""
     from ddgs import DDGS
@@ -367,7 +368,7 @@ def search(
     def run_search() -> None:
         try:
             outcome["results"] = DDGS(timeout=SEARCH_TIMEOUT_SECONDS, verify=certifi.where()).text(
-                make_query(prompt, niche_level), region="us-en", max_results=max_results,
+                query or make_query(prompt, niche_level), region="us-en", max_results=max_results,
                 backend=backend or SEARCH_BACKEND,
             )
         except Exception as exc:
@@ -392,3 +393,42 @@ def search(
             "search_provider": backend or SEARCH_BACKEND,
         })
     return normalized[:max_results]
+
+
+def verify_candidates(candidates: list[dict], results: list[dict[str, str]]) -> list[dict]:
+    """Attach direct web evidence to model candidates without inventing support."""
+    verified = []
+    for candidate in candidates:
+        answer = str(candidate.get("answer", "")).strip()
+        if not answer:
+            continue
+        answer_pattern = re.compile(rf"(?<!\w){re.escape(answer)}(?!\w)", re.I)
+        matching = [
+            result for result in results
+            if answer_pattern.search(f"{result.get('title', '')} {result.get('snippet', '')}")
+        ]
+        item = dict(candidate)
+        item["sources"] = [
+            {"title": result.get("title", ""), "snippet": result.get("snippet", ""),
+             "url": result.get("url", ""), "evidence_type": "web match",
+             "search_providers": result.get("search_providers") or [result.get("search_provider", "")]}
+            for result in matching
+        ]
+        item["source_count"] = len({
+            _domain(result.get("url", "")) for result in matching if result.get("url")
+        })
+        if matching:
+            item["evidence"] = matching[0].get("snippet", "") or matching[0].get("title", "")
+            item["title"] = matching[0].get("title", "")
+            item["url"] = matching[0].get("url", "")
+            item["evidence_status"] = "Web mention found · prompt fit not verified"
+        else:
+            item["evidence"] = "No retrieved web result directly mentioned this candidate."
+            item["evidence_status"] = "Ollama suggestion · no web match"
+        item["evidence_score"] = item["source_count"]
+        verified.append(item)
+    verified.sort(key=lambda item: (
+        item.get("evidence_status") != "Web mention found · prompt fit not verified",
+        -int(item.get("source_count", 0)),
+    ))
+    return verified

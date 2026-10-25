@@ -13,10 +13,10 @@ from .search_provider import split_prompt_exclusions
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("KRILLION_OLLAMA_MODEL", "krillion-fast").strip()
-OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("KRILLION_OLLAMA_TIMEOUT_SECONDS", "8"))
+OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("KRILLION_OLLAMA_TIMEOUT_SECONDS", "20"))
 
-SYSTEM_PROMPT = """You help with fast open-answer trivia. Return a concise, directly usable answer.
-Obey every stated condition and exclusion. Give one safe, category-matching candidate first, then up to four less-obvious alternatives only when you can name them confidently. Usually use one word or a short proper name per answer. Do not explain or claim game acceptance or rarity is verified. If uncertain, say UNCERTAIN.
+SYSTEM_PROMPT = """You help with fast open-answer trivia. Return concise, directly usable English answers.
+All answers must be English words or names normally written in English. Obey every stated condition and exclusion. Treat supplied dictionary/country examples as hints, not as proof they fit. Give one safe, category-matching candidate first, then up to four alternatives only when confident. Usually use one word or a short proper name per answer. Do not explain or claim game acceptance or rarity is verified. If uncertain, say UNCERTAIN.
 Use exactly:
 SAFE: <one candidate>
 MORE OPTIONS: <up to four comma-separated candidates>"""
@@ -57,7 +57,7 @@ def parse_suggestions(text: str, prompt: str) -> list[dict[str, object]]:
     return results
 
 
-def suggest(prompt: str) -> list[dict[str, object]]:
+def suggest(prompt: str, hints: list[str] | None = None) -> list[dict[str, object]]:
     if not OLLAMA_MODEL:
         return []
     body = json.dumps({
@@ -65,7 +65,11 @@ def suggest(prompt: str) -> list[dict[str, object]]:
         "stream": False,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": (
+                f"Prompt: {prompt}\n"
+                f"Possible English dictionary/country examples to consider: {', '.join(hints or []) or 'none'}\n"
+                "Return only candidates that satisfy the prompt."
+            )},
         ],
         "options": {"temperature": 0.2, "num_predict": 80},
     }).encode("utf-8")

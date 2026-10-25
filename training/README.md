@@ -18,7 +18,7 @@ python training/finetune_krillion.py
 
 To select another Hugging Face Llama 3.1 Instruct checkpoint, set `KRILLION_BASE_MODEL`. This script fine-tunes an HF/Safetensors checkpoint; an Ollama GGUF file itself is not the input checkpoint.
 
-The trainer also reads confirmed answer entries from `%LOCALAPPDATA%\KrillionSolver\learned_answers.json` when present. Those entries are marked in the examples as safe answers, with no invented rarity labels. Review `training/trivia_data.jsonl` before training: a model memorizes mistakes as readily as correct examples. The sample set is intentionally small and demonstrates the style; expand it with diverse, verified prompts and answers before expecting factual improvement.
+When you click **Add to training data** in the app, it appends a JSONL example to `%LOCALAPPDATA%\KrillionSolver\training_examples.jsonl`. The trainer reads these rows alongside `training/trivia_data.jsonl` and formats each confirmed answer as a safe first answer. It also imports older entries from `%LOCALAPPDATA%\KrillionSolver\learned_answers.json`, if present, without deleting that file. These examples do not affect the running model until fine-tuning completes and you recreate its Ollama tag. Review the training examples before training: a model memorizes mistakes as readily as correct answers. The trainer requires at least 10 unique examples.
 
 ## Import and run with Ollama
 
@@ -29,7 +29,7 @@ ollama create krillion-fast -f training/export/Modelfile
 ollama run krillion-fast
 ```
 
-The desktop app calls local Ollama at `http://127.0.0.1:11434` using model name `krillion-fast`. Keep Ollama running. Change `KRILLION_OLLAMA_MODEL` to use another installed tag, or set it to an empty string to disable local model suggestions. The app labels these as unverified and applies its deterministic constraints/exclusions where it can.
+The desktop app calls local Ollama at `http://127.0.0.1:11434` using model name `krillion-fast` by default. `Run KrillionSolver.bat` checks that service and starts `ollama serve` hidden if needed. Change `KRILLION_OLLAMA_MODEL` to use another installed tag, or set it to an empty string to disable local model suggestions. The app labels model answers as unverified and applies deterministic constraints/exclusions where it can.
 
 To run the desktop app with the model tag from PowerShell:
 
@@ -37,6 +37,8 @@ To run the desktop app with the model tag from PowerShell:
 $env:KRILLION_OLLAMA_MODEL = "krillion-fast"
 ..\Run KrillionSolver.bat
 ```
+
+After adding feedback examples, rerun `python training/finetune_krillion.py` from the separate training environment. When it finishes, run `ollama create krillion-fast -f training/export/Modelfile` to replace the local tag with the newly fine-tuned export. This is an offline fine-tune, not an automatic per-answer model update.
 
 ## Data format
 

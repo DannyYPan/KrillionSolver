@@ -32,6 +32,17 @@ if errorlevel 1 (
     if errorlevel 1 goto :failed
 )
 
+if defined LOCALAPPDATA if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "PATH=%LOCALAPPDATA%\Programs\Ollama;%PATH%"
+where ollama.exe >nul 2>nul
+if errorlevel 1 (
+    echo Ollama was not found in PATH. Install Ollama to enable local model answers.
+) else (
+    echo Checking the Ollama service...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "$url='http://127.0.0.1:11434/api/tags'; try { Invoke-RestMethod -Uri $url -TimeoutSec 2 | Out-Null; exit 0 } catch {}; $exe=(Get-Command ollama.exe -ErrorAction SilentlyContinue).Source; if (-not $exe) { exit 2 }; try { Start-Process -FilePath $exe -ArgumentList 'serve' -WindowStyle Hidden } catch { exit 3 }; for ($i=0; $i -lt 20; $i++) { Start-Sleep -Seconds 1; try { Invoke-RestMethod -Uri $url -TimeoutSec 2 | Out-Null; exit 0 } catch {} }; exit 1"
+    if errorlevel 1 echo Could not start Ollama. KrillionSolver will open, but local model answers may be unavailable.
+)
+
 echo Starting KrillionSolver...
 ".venv\Scripts\python.exe" prompt_assistant.py
 if errorlevel 1 goto :failed

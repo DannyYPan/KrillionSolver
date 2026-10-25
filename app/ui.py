@@ -71,7 +71,6 @@ class KrillionSolverApp(tk.Tk):
         self.options_frame = options
         options.grid(row=1, column=0, sticky="ew")
         ttk.Checkbutton(options, text="Automatic search", variable=self.auto_search).pack(side="left")
-        ttk.Checkbutton(options, text="Always on top", variable=self.always_on_top, command=self._top_changed).pack(side="left", padx=12)
         ttk.Checkbutton(options, text="Diagnostics", variable=self.diagnostics).pack(side="left")
 
         prompt = ttk.LabelFrame(self, text="Detected prompt", padding=8)
@@ -87,7 +86,7 @@ class KrillionSolverApp(tk.Tk):
         learn_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         learn_row.columnconfigure(0, weight=1)
         ttk.Entry(learn_row, textvariable=self.learned_answer_var).grid(row=0, column=0, sticky="ew")
-        ttk.Button(learn_row, text="Remember confirmed answer", command=self._remember_answer).grid(row=0, column=1, padx=(6, 0))
+        ttk.Button(learn_row, text="Add to training data", command=self._remember_answer).grid(row=0, column=1, padx=(6, 0))
 
         actions = ttk.Frame(self, padding=(10, 4))
         actions.grid(row=3, column=0, sticky="ew")
@@ -96,6 +95,7 @@ class KrillionSolverApp(tk.Tk):
         ttk.Button(actions, text="Clear Results", command=self.clear_results).pack(side="right", padx=6)
         self.view_button = ttk.Button(actions, text="Compact view", command=self._toggle_compact)
         self.view_button.pack(side="right", padx=6)
+        ttk.Checkbutton(actions, text="Always on top", variable=self.always_on_top, command=self._top_changed).pack(side="right", padx=6)
 
         ideas_frame = ttk.LabelFrame(self, text="Answer ideas", padding=6)
         self.ideas_frame = ideas_frame
@@ -170,8 +170,8 @@ class KrillionSolverApp(tk.Tk):
             self.rowconfigure(4, weight=1)
             self.ideas_frame.grid_configure(sticky="nsew")
             self.prompt_label.configure(wraplength=350)
-            self.geometry("400x430")
-            self.minsize(350, 350)
+            self.geometry("500x430")
+            self.minsize(450, 350)
             self.view_button.configure(text="Full view")
         else:
             self.controls_frame.grid()
@@ -260,7 +260,7 @@ class KrillionSolverApp(tk.Tk):
                 "sources": [],
             })
         self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith("Searching"))
-        self.search_status.set("Saved answer for this prompt")
+        self.search_status.set("Added to training data · fine-tune Ollama to apply")
 
     def refresh_search(self) -> None:
         if not self.current_prompt:
@@ -295,9 +295,10 @@ class KrillionSolverApp(tk.Tk):
             ttk.Button(card, text="Copy", command=lambda answer=candidate["answer"]: self._copy_answer(answer)).pack(side="right")
             evidence = candidate.get("evidence_status", "Title only · unverified")
             source_count = candidate.get("source_count", 0)
-            if evidence == "Snippet-supported" and source_count:
+            if evidence.startswith("Web mention found") and source_count:
+                evidence += f" · {source_count} source{'s' if source_count != 1 else ''}"
+            elif evidence == "Snippet-supported" and source_count:
                 evidence = f"Snippet-supported · {source_count} independent source{'s' if source_count != 1 else ''}"
-            evidence += f" · {candidate.get('evidence_score', 0)} evidence points"
             ttk.Label(self.ideas_inner, text=evidence, foreground="#555").pack(anchor="w", padx=24)
 
     def _scroll_canvas_under_pointer(self, event) -> tk.Canvas | None:
