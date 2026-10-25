@@ -18,6 +18,12 @@ def _training_path() -> Path:
     return root / "KrillionSolver" / "training_examples.jsonl"
 
 
+def _rejected_path() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    root = Path(base) if base else Path.home() / ".local" / "share"
+    return root / "KrillionSolver" / "rejected_answers.jsonl"
+
+
 def _rows() -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     try:
@@ -55,6 +61,36 @@ def remember(prompt: str, answer: str) -> bool:
         if any((normalize_prompt(row["prompt"]), row["answer"].casefold()) == key for row in _rows()):
             return True
         path = _training_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as data_file:
+            data_file.write(json.dumps({"prompt": clean_prompt, "answer": clean_answer}, ensure_ascii=False) + "\n")
+            data_file.flush()
+            os.fsync(data_file.fileno())
+    return True
+
+
+def reject_answer(prompt: str, answer: str) -> bool:
+    """Persist a user-rejected model answer for preference fine-tuning."""
+    clean_prompt = " ".join(prompt.split())
+    clean_answer = " ".join(answer.split())
+    if (not normalize_prompt(clean_prompt) or not clean_answer or len(clean_answer) > 100
+            or any(ord(char) < 32 for char in clean_answer)):
+        return False
+    key = (normalize_prompt(clean_prompt), clean_answer.casefold())
+    path = _rejected_path()
+    with _lock:
+        try:
+            with path.open(encoding="utf-8") as data_file:
+                for line in data_file:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if (normalize_prompt(str(row.get("prompt", ""))),
+                            str(row.get("answer", "")).casefold()) == key:
+                        return True
+        except FileNotFoundError:
+            pass
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8", newline="\n") as data_file:
             data_file.write(json.dumps({"prompt": clean_prompt, "answer": clean_answer}, ensure_ascii=False) + "\n")

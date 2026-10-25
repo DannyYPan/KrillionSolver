@@ -25,11 +25,16 @@ class SearchWorker:
         self.events = events
         self.cache = cache or SearchCache()
         self._lock = threading.Lock()
-        self._inflight: dict[str, list[int]] = {}
+        self._inflight: dict[tuple[str, tuple[str, ...]], list[int]] = {}
         self._ollama_failure_until = 0.0
 
-    def request(self, prompt: str, request_id: int, force: bool = False) -> None:
-        key = normalize_prompt(prompt)
+    def request(
+        self, prompt: str, request_id: int, force: bool = False,
+        excluded_answers: list[str] | None = None,
+    ) -> None:
+        prompt_key = normalize_prompt(prompt)
+        exclusions = tuple(sorted({item.casefold().strip() for item in (excluded_answers or [])}))
+        key = (prompt_key, exclusions)
         with self._lock:
             if key in self._inflight:
                 if request_id not in self._inflight[key]:
@@ -60,8 +65,8 @@ class SearchWorker:
 
         def work() -> None:
             try:
-                cached_candidates = None if force else self.cache.get_candidates(prompt)
-                cached_results = None if force else self.cache.get(prompt)
+                cached_candidates = None if force or exclusions else self.cache.get_candidates(prompt)
+                cached_results = None if force or exclusions else self.cache.get(prompt)
                 if cached_candidates is not None and cached_results is not None:
                     emit(cached_candidates, True, None, "cached")
                     return
@@ -78,7 +83,13 @@ class SearchWorker:
                     model_error = "Ollama recently failed; use Refresh Search to retry."
                 else:
                     try:
-                        model_candidates = suggest_with_ollama(prompt, hints=hints)
+                        def publish_partial(partial: list[dict]) -> None:
+                            emit(partial, False, None, "ollama")
+
+                        model_candidates = suggest_with_ollama(
+                            prompt, hints=hints, excluded_answers=excluded_answers,
+                            on_update=publish_partial,
+                        )
                         self._ollama_failure_until = 0.0
                     except Exception as exc:
                         model_error = f"Ollama unavailable: {exc}"
@@ -90,7 +101,7 @@ class SearchWorker:
                     model_error = "Ollama did not return a readable answer."
 
                 # Complete immediately after generation; no web request can block or hide it.
-                if model_candidates:
+                if model_candidates and not exclusions:
                     self.cache.put(prompt, [], model_candidates)
                 emit(candidates, True, model_error, source)
             except Exception as exc:

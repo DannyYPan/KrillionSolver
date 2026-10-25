@@ -10,7 +10,7 @@ from tkinter import ttk
 from .background_worker import SearchWorker, result_is_current
 from .browser_manager import BrowserMonitor
 from .prompt_detector import normalize_prompt
-from .learned_answers import remember
+from .learned_answers import reject_answer, remember
 from .site_adapters import ADAPTERS
 
 
@@ -39,6 +39,7 @@ class KrillionSolverApp(tk.Tk):
         self.query_var = tk.StringVar(value="")
         self.learned_answer_var = tk.StringVar(value="")
         self.current_candidates: list[dict] = []
+        self.rejected_answers: list[str] = []
         self._build()
         self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
         self.bind_all("<Button-4>", lambda event: self._route_scroll_button(event, -1), add="+")
@@ -233,6 +234,7 @@ class KrillionSolverApp(tk.Tk):
             return
         self.current_prompt = prompt
         self.current_candidates = []
+        self.rejected_answers = []
         self.prompt_var.set(prompt)
         self.query_var.set(prompt.rstrip("?.! "))
         self.request_id += 1
@@ -267,8 +269,26 @@ class KrillionSolverApp(tk.Tk):
             self.search_status.set("No prompt to search")
             return
         self.request_id += 1
-        self.search_worker.request(self.current_prompt, self.request_id, force=True)
+        self.search_worker.request(
+            self.current_prompt, self.request_id, force=True,
+            excluded_answers=self.rejected_answers,
+        )
         self.search_status.set("Asking Ollama again…")
+
+    def _reject_answer(self, answer: str) -> None:
+        if self.current_prompt and not reject_answer(self.current_prompt, answer):
+            self.search_status.set("Could not save feedback for fine-tuning")
+            return
+        if not any(item.casefold() == answer.casefold() for item in self.rejected_answers):
+            self.rejected_answers.append(answer)
+        self.current_candidates = [
+            item for item in self.current_candidates
+            if item.get("answer", "").casefold() != answer.casefold()
+        ]
+        self._render_candidates(self.current_candidates, searching=True)
+        if self.current_prompt:
+            self.refresh_search()
+            self.search_status.set(f"Marked {answer} wrong · saved; add a confirmed answer to train it")
 
     def clear_results(self) -> None:
         for child in self.results_inner.winfo_children():
@@ -280,6 +300,8 @@ class KrillionSolverApp(tk.Tk):
         self.sources_toggle.configure(text=f"{marker} Sources (0)")
 
     def _render_candidates(self, candidates: list[dict], searching: bool = False) -> None:
+        rejected = {answer.casefold() for answer in self.rejected_answers}
+        candidates = [item for item in candidates if item.get("answer", "").casefold() not in rejected]
         self.current_candidates = list(candidates)
         for child in self.ideas_inner.winfo_children():
             child.destroy()
@@ -293,6 +315,7 @@ class KrillionSolverApp(tk.Tk):
             name = ttk.Label(card, text=f"{number}. {candidate['answer']}", font=("Segoe UI", 10, "bold"))
             name.pack(side="left", anchor="w")
             ttk.Button(card, text="Copy", command=lambda answer=candidate["answer"]: self._copy_answer(answer)).pack(side="right")
+            ttk.Button(card, text="Wrong", command=lambda answer=candidate["answer"]: self._reject_answer(answer)).pack(side="right", padx=(0, 5))
             evidence = candidate.get("evidence_status", "Title only · unverified")
             source_count = candidate.get("source_count", 0)
             if evidence.startswith("Web mention found") and source_count:

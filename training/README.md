@@ -16,29 +16,31 @@ python -m pip install -r training/requirements.txt
 python training/finetune_krillion.py
 ```
 
+For the guided launcher, double-click **Train KrillionSolver.bat** in the project folder. It prints the model and training settings, every curated and user-confirmed example, every usable correct-versus-wrong preference pair, and rejected answers that still need a confirmed correction. Training starts only after you type `TRAIN`. The launcher expects the training environment at `.training-venv\Scripts\python.exe`; alternatively, set `KRILLION_TRAINING_PYTHON` to the full path of a prepared Python executable.
+
 To select another Hugging Face Llama 3.1 Instruct checkpoint, set `KRILLION_BASE_MODEL`. This script fine-tunes an HF/Safetensors checkpoint; an Ollama GGUF file itself is not the input checkpoint.
 
-When you click **Add to training data** in the app, it appends a JSONL example to `%LOCALAPPDATA%\KrillionSolver\training_examples.jsonl`. The trainer reads these rows alongside `training/trivia_data.jsonl` and formats each confirmed answer as a safe first answer. It also imports older entries from `%LOCALAPPDATA%\KrillionSolver\learned_answers.json`, if present, without deleting that file. These examples do not affect the running model until fine-tuning completes and you recreate its Ollama tag. Review the training examples before training: a model memorizes mistakes as readily as correct answers. The trainer requires at least 10 unique examples.
+When you click **Add to training data**, it appends a confirmed answer to `%LOCALAPPDATA%\KrillionSolver\training_examples.jsonl`. Clicking **Wrong** saves the rejected candidate to `%LOCALAPPDATA%\KrillionSolver\rejected_answers.jsonl`. For the trainer to learn a preference, save at least one correct answer for that same prompt too. The trainer first runs supervised fine-tuning on confirmed examples, then applies a DPO preference step pairing confirmed answers as preferred and rejected answers as dispreferred. Wrong answers without a confirmed answer for the same prompt are saved but cannot form a preference pair. The training set requires at least 10 unique examples. None of this changes the running model until training completes and you recreate its Ollama tag.
 
 ## Import and run with Ollama
 
 The script writes a Q4_K_M GGUF and a matching `training/export/Modelfile`. After export:
 
 ```powershell
-ollama create krillion-fast -f training/export/Modelfile
-ollama run krillion-fast
+ollama create krillionsolver:8b -f training/export/Modelfile
+ollama run krillionsolver:8b
 ```
 
-The desktop app calls local Ollama at `http://127.0.0.1:11434` using model name `krillion-fast` by default. `Run KrillionSolver.bat` checks that service and starts `ollama serve` hidden if needed. Change `KRILLION_OLLAMA_MODEL` to use another installed tag, or set it to an empty string to disable local model suggestions. The app labels model answers as unverified and applies deterministic constraints/exclusions where it can.
+The desktop launcher checks local Ollama at `http://127.0.0.1:11434`, starts `ollama serve` hidden if needed, and selects `krillionsolver:8b` when that fine-tuned tag is installed. Otherwise it uses `llama3.1:latest` (the base 8B model). Both choices stay on Llama 3.1 8B. Answers are still labeled as unverified, and the app applies deterministic constraints/exclusions where it can.
 
-To run the desktop app with the model tag from PowerShell:
+To run the desktop app with the fine-tuned tag directly from PowerShell:
 
 ```powershell
-$env:KRILLION_OLLAMA_MODEL = "krillion-fast"
+$env:KRILLION_OLLAMA_MODEL = "krillionsolver:8b"
 ..\Run KrillionSolver.bat
 ```
 
-After adding feedback examples, rerun `python training/finetune_krillion.py` from the separate training environment. When it finishes, run `ollama create krillion-fast -f training/export/Modelfile` to replace the local tag with the newly fine-tuned export. This is an offline fine-tune, not an automatic per-answer model update.
+After collecting confirmed and wrong-answer feedback, rerun `python training/finetune_krillion.py` from the separate training environment. It prints the `ollama create` command for the new `krillionsolver:8b` model. The launcher will pick it up on its next start. This is offline fine-tuning, not an immediate per-click weight update.
 
 ## Data format
 

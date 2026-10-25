@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from datasets import Dataset
-from trl import SFTConfig, SFTTrainer
+from trl import DPOConfig, DPOTrainer, SFTConfig, SFTTrainer
 from unsloth import FastLanguageModel, is_bfloat16_supported
 
 
@@ -92,6 +92,63 @@ def load_training_dataset(tokenizer) -> Dataset:
     return dataset.map(lambda row: {"text": format_row(row)}, remove_columns=["prompt", "answer"])
 
 
+def load_preference_dataset(tokenizer) -> Dataset | None:
+    """Pair wrong model answers with manually confirmed answers for that prompt."""
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    user_data_dir = Path(local_app_data) / "KrillionSolver" if local_app_data else None
+    if not user_data_dir:
+        return None
+    confirmed_file = user_data_dir / "training_examples.jsonl"
+    rejected_file = user_data_dir / "rejected_answers.jsonl"
+    if not confirmed_file.is_file() or not rejected_file.is_file():
+        return None
+
+    def key(value: str) -> str:
+        return " ".join(value.split()).casefold()
+
+    confirmed: dict[str, list[str]] = {}
+    for line in confirmed_file.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        prompt, answer = row.get("prompt"), row.get("answer")
+        if isinstance(prompt, str) and isinstance(answer, str) and prompt.strip() and answer.strip():
+            confirmed.setdefault(key(prompt), []).append(answer.strip())
+
+    preference_rows = []
+    seen = set()
+    for line in rejected_file.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        prompt, rejected = row.get("prompt"), row.get("answer")
+        if not isinstance(prompt, str) or not isinstance(rejected, str):
+            continue
+        for chosen in confirmed.get(key(prompt), []):
+            if chosen.casefold() == rejected.casefold():
+                continue
+            signature = (key(prompt), chosen.casefold(), rejected.casefold())
+            if signature in seen:
+                continue
+            seen.add(signature)
+            formatted_prompt = tokenizer.apply_chat_template(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt.strip()},
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            preference_rows.append({
+                "prompt": formatted_prompt,
+                "chosen": f"SAFE: {chosen}\nMORE OPTIONS:",
+                "rejected": f"SAFE: {rejected.strip()}\nMORE OPTIONS:",
+            })
+    return Dataset.from_list(preference_rows) if preference_rows else None
+
+
 def main() -> None:
     if not DATA_FILE.is_file():
         raise FileNotFoundError(f"Training data not found: {DATA_FILE}")
@@ -164,6 +221,46 @@ def main() -> None:
     )
     trainer.train()
 
+    preferences = load_preference_dataset(tokenizer)
+    if preferences is not None:
+        print(f"Applying {len(preferences)} wrong-answer preferences paired with your confirmed answers.")
+        preference_options = _supported_kwargs(DPOConfig, {
+            "output_dir": str(OUTPUT_DIR / "preferences"),
+            "per_device_train_batch_size": 1,
+            "gradient_accumulation_steps": 4,
+            "num_train_epochs": 1,
+            "learning_rate": 5e-6,
+            "beta": 0.1,
+            "fp16": not is_bfloat16_supported(),
+            "bf16": is_bfloat16_supported(),
+            "optim": "adamw_8bit",
+            "logging_steps": 1,
+            "report_to": "none",
+            "save_strategy": "no",
+            "max_length": MAX_SEQ_LENGTH,
+            "max_prompt_length": MAX_SEQ_LENGTH - 128,
+        })
+        preference_args = DPOConfig(**preference_options)
+        preference_trainer_options = _supported_kwargs(DPOTrainer, {
+            "processing_class": tokenizer,
+            "tokenizer": tokenizer,
+        })
+        preference_signature = inspect.signature(DPOTrainer)
+        if "processing_class" in preference_signature.parameters:
+            preference_trainer_options.pop("tokenizer", None)
+        elif "tokenizer" in preference_signature.parameters:
+            preference_trainer_options.pop("processing_class", None)
+        preference_trainer = DPOTrainer(
+            model=model,
+            ref_model=None,
+            args=preference_args,
+            train_dataset=preferences,
+            **preference_trainer_options,
+        )
+        preference_trainer.train()
+    else:
+        print("No preference pairs found. To teach a correction, mark an answer wrong and add a confirmed answer for the same prompt.")
+
     print("Exporting quantized GGUF; this needs additional disk/RAM and can take a while.")
     model.save_pretrained_gguf(str(EXPORT_DIR), tokenizer, quantization_method="q4_k_m")
     gguf_files = sorted(EXPORT_DIR.rglob("*.gguf"))
@@ -179,8 +276,8 @@ def main() -> None:
         encoding="utf-8",
     )
     print(f"GGUF ready: {model_file}")
-    print(f"Next: ollama create krillion-fast -f \"{modelfile.resolve()}\"")
-    print("Then: ollama run krillion-fast")
+    print(f"Next: ollama create krillionsolver:8b -f \"{modelfile.resolve()}\"")
+    print("Then launch Run KrillionSolver.bat; it will use krillionsolver:8b when installed.")
 
 
 if __name__ == "__main__":
