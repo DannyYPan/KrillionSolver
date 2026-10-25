@@ -37,7 +37,6 @@ class KrillionSolverApp(tk.Tk):
         self.search_status = tk.StringVar(value="Waiting for a prompt")
         self.prompt_var = tk.StringVar(value="No prompt detected yet")
         self.query_var = tk.StringVar(value="")
-        self.learned_answer_var = tk.StringVar(value="")
         self.current_candidates: list[dict] = []
         self.rejected_answers: list[str] = []
         self._build()
@@ -83,12 +82,6 @@ class KrillionSolverApp(tk.Tk):
         self.query_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.query_value = ttk.Label(prompt, textvariable=self.query_var, wraplength=590)
         self.query_value.grid(row=2, column=0, sticky="w")
-        learn_row = ttk.Frame(prompt)
-        learn_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        learn_row.columnconfigure(0, weight=1)
-        ttk.Entry(learn_row, textvariable=self.learned_answer_var).grid(row=0, column=0, sticky="ew")
-        ttk.Button(learn_row, text="Add to training data", command=self._remember_answer).grid(row=0, column=1, padx=(6, 0))
-
         actions = ttk.Frame(self, padding=(10, 4))
         actions.grid(row=3, column=0, sticky="ew")
         ttk.Label(actions, textvariable=self.search_status).pack(side="left")
@@ -238,31 +231,43 @@ class KrillionSolverApp(tk.Tk):
         self.prompt_var.set(prompt)
         self.query_var.set(prompt.rstrip("?.! "))
         self.request_id += 1
-        self.clear_results()
+        self.clear_results(reset_scroll=True)
         if self.auto_search.get():
             self.search_worker.request(prompt, self.request_id)
             self.search_status.set("Asking Ollama…")
 
-    def _remember_answer(self) -> None:
-        answer = self.learned_answer_var.get()
+    def _save_confirmed_answer(self, answer: str) -> bool:
         if not self.current_prompt:
             self.search_status.set("Wait for a prompt before saving an answer")
-            return
+            return False
         if not remember(self.current_prompt, answer):
             self.search_status.set("Enter an answer of 1 to 100 characters")
-            return
-        self.learned_answer_var.set("")
-        if not any(item.get("answer", "").casefold() == answer.strip().casefold() for item in self.current_candidates):
+            return False
+        clean_answer = " ".join(answer.split())
+        found = False
+        updated_candidates = []
+        for item in self.current_candidates:
+            if item.get("answer", "").casefold() == clean_answer.casefold():
+                item = {
+                    **item,
+                    "evidence": "Confirmed by you for this prompt.",
+                    "evidence_status": "✓ Added to training data",
+                }
+                found = True
+            updated_candidates.append(item)
+        self.current_candidates = updated_candidates
+        if not found:
             self.current_candidates.insert(0, {
-                "answer": " ".join(answer.split()),
+                "answer": clean_answer,
                 "evidence": "Previously entered and confirmed by you for this prompt.",
-                "evidence_status": "You confirmed this answer",
+                "evidence_status": "✓ Added to training data",
                 "evidence_score": 0,
                 "source_count": 0,
                 "sources": [],
             })
         self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith("Searching"))
-        self.search_status.set("Added to training data · fine-tune Ollama to apply")
+        self.search_status.set(f"✓ {clean_answer} added to training data")
+        return True
 
     def refresh_search(self) -> None:
         if not self.current_prompt:
@@ -290,7 +295,12 @@ class KrillionSolverApp(tk.Tk):
             self.refresh_search()
             self.search_status.set(f"Marked {answer} wrong · saved for the next training run")
 
-    def clear_results(self) -> None:
+    def _scroll_results_to_top(self) -> None:
+        """Start each newly detected question at its first answer/source."""
+        self.ideas_canvas.yview_moveto(0)
+        self.results_canvas.yview_moveto(0)
+
+    def clear_results(self, reset_scroll: bool = False) -> None:
         for child in self.results_inner.winfo_children():
             child.destroy()
         for child in self.ideas_inner.winfo_children():
@@ -298,6 +308,10 @@ class KrillionSolverApp(tk.Tk):
         self.source_count = 0
         marker = "▼" if self.sources_expanded else "▶"
         self.sources_toggle.configure(text=f"{marker} Sources (0)")
+        if reset_scroll:
+            self._scroll_results_to_top()
+            # Repeat after Tkinter recalculates the now-empty canvas layout.
+            self.after_idle(self._scroll_results_to_top)
 
     def _render_candidates(self, candidates: list[dict], searching: bool = False) -> None:
         rejected = {answer.casefold() for answer in self.rejected_answers}
@@ -314,8 +328,18 @@ class KrillionSolverApp(tk.Tk):
             card.pack(fill="x", anchor="w")
             name = ttk.Label(card, text=f"{number}. {candidate['answer']}", font=("Segoe UI", 10, "bold"))
             name.pack(side="left", anchor="w")
-            ttk.Button(card, text="Copy", command=lambda answer=candidate["answer"]: self._copy_answer(answer)).pack(side="right")
-            ttk.Button(card, text="Wrong", command=lambda answer=candidate["answer"]: self._reject_answer(answer)).pack(side="right", padx=(0, 5))
+            ttk.Button(
+                card, text="⧉", width=3,
+                command=lambda answer=candidate["answer"]: self._copy_answer(answer),
+            ).pack(side="right")
+            ttk.Button(
+                card, text="✓", width=3,
+                command=lambda answer=candidate["answer"]: self._save_confirmed_answer(answer),
+            ).pack(side="right", padx=(0, 4))
+            ttk.Button(
+                card, text="✕", width=3,
+                command=lambda answer=candidate["answer"]: self._reject_answer(answer),
+            ).pack(side="right", padx=(0, 4))
             evidence = candidate.get("evidence_status", "Title only · unverified")
             source_count = candidate.get("source_count", 0)
             if evidence.startswith("Web mention found") and source_count:

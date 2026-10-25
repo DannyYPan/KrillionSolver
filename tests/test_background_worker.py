@@ -79,7 +79,7 @@ class BackgroundWorkerTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
 
-        def delayed_suggest(prompt, hints=None):
+        def delayed_suggest(prompt, hints=None, excluded_answers=None, on_update=None):
             entered.set()
             release.wait(timeout=2)
             return [_candidate("Paris")]

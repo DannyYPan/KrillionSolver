@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 title KrillionSolver setup and launcher
 
@@ -45,7 +45,7 @@ if errorlevel 1 (
     if errorlevel 1 echo Could not start Ollama. KrillionSolver will open, but local model answers may be unavailable.
     if errorlevel 1 goto :ollama_done
     for /f "tokens=1" %%M in ('ollama list 2^>nul ^| findstr /b /c:"krillionsolver:8b"') do set "KRILLION_OLLAMA_MODEL=%%M"
-    if "%KRILLION_OLLAMA_MODEL%"=="krillionsolver:8b" echo Using the fine-tuned Llama 3.1 8B model.
+    if "!KRILLION_OLLAMA_MODEL!"=="krillionsolver:8b" echo Using the fine-tuned Llama 3.1 8B model.
     echo Loading the configured Ollama model. The first load can take a while...
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
         "$model=$env:KRILLION_OLLAMA_MODEL; $url='http://127.0.0.1:11434/api/generate'; $body=@{ model=$model; prompt=''; stream=$false; keep_alive='10m' } | ConvertTo-Json -Compress; try { Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 600 | Out-Null; Write-Host ('Model ' + $model + ' (Llama 3.1 8B) is running and ready.'); exit 0 } catch { Write-Host ('Could not load model ' + $model + '. Install it with: ollama pull ' + $model); exit 1 }"
