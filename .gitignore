@@ -1,5 +1,6 @@
 .venv/
 .training-venv/
+KrillionSolver-Colab-Training.zip
 __pycache__/
 *.py[cod]
 .pytest_cache/

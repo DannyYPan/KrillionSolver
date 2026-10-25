@@ -9,6 +9,18 @@ This optional training setup tunes Llama 3.1 8B Instruct to answer in a compact 
 - The default model is `unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit`. The first run downloads the Hugging Face checkpoint. If gated access is required, accept Meta's model terms and log in to Hugging Face first.
 - An 8B QLoRA run still needs substantial RAM/VRAM and disk space. If your machine cannot train it, use a GPU notebook/host, then copy the exported GGUF back to this PC.
 
+## Train with Google Colab
+
+When this PC has no supported training GPU:
+
+1. Double-click **Prepare Colab Training.bat** in the project folder. It creates `KrillionSolver-Colab-Training.zip` from the current curated data plus the confirmed and rejected feedback stored under `%LOCALAPPDATA%\KrillionSolver`.
+2. Upload `training/KrillionSolver_Colab_Training.ipynb` at [Google Colab](https://colab.research.google.com/), or open it there from Google Drive.
+3. Choose **Runtime > Change runtime type > T4 GPU** and run the cells in order.
+4. When asked, upload `KrillionSolver-Colab-Training.zip`.
+5. Download the trained export ZIP produced by the last cell. Extract it locally and run `ollama create krillionsolver:8b -f Modelfile` from the extracted directory.
+
+The notebook uploads the answer data you package to the Colab runtime and downloads the Llama 3.1 base checkpoint from Hugging Face. A free Colab GPU is not guaranteed and the runtime can disconnect, so save the exported ZIP as soon as it is ready.
+
 Example, after setting up a separate training environment and installing Unsloth according to its guide:
 
 ```powershell

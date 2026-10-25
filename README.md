@@ -30,6 +30,8 @@ Click **Add to training data** to add a confirmed prompt/answer example to `%LOC
 
 Double-click **Train KrillionSolver.bat** for a complete preview of the model settings and data. It requires typing `TRAIN` before it starts the GPU training script.
 
+If this computer has no CUDA training GPU, double-click **Prepare Colab Training.bat**, then follow the Google Colab section in [training/README.md](training/README.md). The generated upload ZIP includes the current curated, confirmed, and rejected training data.
+
 ### Running it as an overlay
 
 For the simplest launch, double-click **Run KrillionSolver.bat**. It performs first-run setup automatically. Once setup has finished, you can also start the app from PowerShell in the project folder with:

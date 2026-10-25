@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 
+import unsloth  # Must patch Transformers/TRL before either library is imported.
+import torch
 from datasets import Dataset
 from trl import DPOConfig, DPOTrainer, SFTConfig, SFTTrainer
 from unsloth import FastLanguageModel, is_bfloat16_supported
@@ -20,6 +22,8 @@ MODEL_NAME = os.environ.get(
     "KRILLION_BASE_MODEL", "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit"
 )
 MAX_SEQ_LENGTH = int(os.environ.get("KRILLION_MAX_SEQ_LENGTH", "512"))
+BFLOAT16_SUPPORTED = is_bfloat16_supported()
+TRAINING_DTYPE = torch.bfloat16 if BFLOAT16_SUPPORTED else torch.float16
 
 SYSTEM_PROMPT = """You help with fast open-answer trivia. Return a concise, directly usable answer.
 For constrained prompts, obey every stated condition and exclusion. Prefer a safe, category-matching answer first; then provide a few less-obvious alternatives only when you can name them confidently. Keep each answer short, usually one word or a short proper name. Do not explain, invent acceptance, or claim rarity/validity is verified. If uncertain, say UNCERTAIN instead of making up an answer.
@@ -160,7 +164,9 @@ def main() -> None:
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_NAME,
         max_seq_length=MAX_SEQ_LENGTH,
-        dtype=None,
+        # Auto detection selected BF16 gradients on a Colab T4 even though
+        # that GPU cannot unscale BF16 values. Force FP16 on pre-Ampere GPUs.
+        dtype=TRAINING_DTYPE,
         load_in_4bit=True,
     )
     model = FastLanguageModel.get_peft_model(
@@ -183,8 +189,8 @@ def main() -> None:
         "warmup_ratio": 0.05,
         "num_train_epochs": 3,
         "learning_rate": 1e-4,
-        "fp16": not is_bfloat16_supported(),
-        "bf16": is_bfloat16_supported(),
+        "fp16": not BFLOAT16_SUPPORTED,
+        "bf16": BFLOAT16_SUPPORTED,
         "logging_steps": 1,
         "optim": "adamw_8bit",
         "weight_decay": 0.01,
@@ -232,8 +238,8 @@ def main() -> None:
             "num_train_epochs": 1,
             "learning_rate": 5e-6,
             "beta": 0.1,
-            "fp16": not is_bfloat16_supported(),
-            "bf16": is_bfloat16_supported(),
+            "fp16": not BFLOAT16_SUPPORTED,
+            "bf16": BFLOAT16_SUPPORTED,
             "optim": "adamw_8bit",
             "logging_steps": 1,
             "report_to": "none",
@@ -264,11 +270,21 @@ def main() -> None:
 
     print("Exporting quantized GGUF; this needs additional disk/RAM and can take a while.")
     model.save_pretrained_gguf(str(EXPORT_DIR), tokenizer, quantization_method="q4_k_m")
-    gguf_files = sorted(EXPORT_DIR.rglob("*.gguf"))
+    # Current Unsloth releases may append ``_gguf`` to the requested output
+    # directory. Accept both layouts instead of failing after a successful
+    # and potentially lengthy conversion.
+    possible_export_dirs = (EXPORT_DIR, Path(f"{EXPORT_DIR}_gguf"))
+    gguf_files = sorted(
+        gguf
+        for export_dir in possible_export_dirs
+        if export_dir.is_dir()
+        for gguf in export_dir.rglob("*.gguf")
+    )
     if not gguf_files:
-        raise FileNotFoundError(f"No GGUF file was created inside {EXPORT_DIR}")
+        checked = ", ".join(str(path) for path in possible_export_dirs)
+        raise FileNotFoundError(f"No GGUF file was created inside: {checked}")
     model_file = gguf_files[0].resolve()
-    modelfile = EXPORT_DIR / "Modelfile"
+    modelfile = model_file.parent / "Modelfile"
     modelfile.write_text(
         f'FROM "{model_file.as_posix()}"\n'
         f'SYSTEM """{SYSTEM_PROMPT}"""\n'
