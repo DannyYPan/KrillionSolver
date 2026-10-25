@@ -5,9 +5,17 @@ import unittest
 from unittest.mock import patch
 
 from app.background_worker import SearchWorker, result_is_current
+from app.search_provider import SEARCH_BACKENDS, SEARCH_QUERY_COUNT
 
 
 class BackgroundWorkerTests(unittest.TestCase):
+    def setUp(self):
+        self.ollama_patch = patch("app.background_worker.OLLAMA_MODEL", "")
+        self.ollama_patch.start()
+
+    def tearDown(self):
+        self.ollama_patch.stop()
+
     def test_stale_result_is_rejected(self):
         self.assertFalse(result_is_current(2, 3, "old prompt", "new prompt"))
         self.assertFalse(result_is_current(3, 3, "old prompt", "new prompt"))
@@ -18,7 +26,10 @@ class BackgroundWorkerTests(unittest.TestCase):
         worker = SearchWorker(events)
         with patch("app.background_worker.search", side_effect=RuntimeError("offline")):
             worker.request("Name a river", 1)
-            kind, payload = events.get(timeout=2)
+            messages = []
+            while not messages or not messages[-1][1].get("complete"):
+                messages.append(events.get(timeout=2))
+            kind, payload = messages[-1]
         self.assertEqual(kind, "search")
         self.assertEqual(payload["error"], "RuntimeError: offline")
         self.assertEqual(payload["results"], [])
@@ -41,7 +52,7 @@ class BackgroundWorkerTests(unittest.TestCase):
 
         self.assertEqual(kind, "search")
         self.assertIn("use Refresh Search", retry["error"])
-        self.assertEqual(mock_search.call_count, 3)
+        self.assertEqual(mock_search.call_count, len(SEARCH_BACKENDS) * SEARCH_QUERY_COUNT)
 
     def test_complementary_queries_run_concurrently_and_publish_stages(self):
         events = queue.Queue()
@@ -49,7 +60,7 @@ class BackgroundWorkerTests(unittest.TestCase):
         lock = threading.Lock()
         active = [0, 0]
 
-        def fake_search(prompt, niche_level=0):
+        def fake_search(prompt, niche_level=0, backend="bing"):
             with lock:
                 active[0] += 1
                 active[1] = max(active[1], active[0])
@@ -59,7 +70,7 @@ class BackgroundWorkerTests(unittest.TestCase):
             return [{
                 "title": f"Lake {niche_level} examples",
                 "snippet": f"Examples include Lake {niche_level} Alpha and Lake {niche_level} Beta.",
-                "url": f"https://source{niche_level}.example/lakes",
+                "url": f"https://{backend}.example/lakes/{niche_level}",
             }]
 
         with patch("app.background_worker.search", side_effect=fake_search):
@@ -69,7 +80,8 @@ class BackgroundWorkerTests(unittest.TestCase):
                 messages.append(events.get(timeout=2))
 
         self.assertGreaterEqual(active[1], 2)
-        self.assertEqual({payload["stage"] for _kind, payload in messages}, {0, 1, 2})
+        self.assertEqual({payload["stage"] for _kind, payload in messages}, set(range(SEARCH_QUERY_COUNT)))
+        self.assertEqual(len(messages[-1][1]["results"]), len(SEARCH_BACKENDS) * SEARCH_QUERY_COUNT)
         self.assertTrue(any(payload["candidates"] for _kind, payload in messages))
 
     def test_cached_result_is_reused(self):
@@ -86,7 +98,7 @@ class BackgroundWorkerTests(unittest.TestCase):
         worker = SearchWorker(events)
         entered, release = threading.Event(), threading.Event()
         calls = []
-        def delayed(prompt):
+        def delayed(prompt, **_kwargs):
             calls.append(prompt)
             entered.set()
             release.wait(timeout=2)
@@ -96,9 +108,14 @@ class BackgroundWorkerTests(unittest.TestCase):
             self.assertTrue(entered.wait(timeout=2))
             worker.request(" name a RIVER ", 11)
             release.set()
-            messages = [events.get(timeout=2), events.get(timeout=2)]
-        self.assertEqual(calls, ["Name a river"])
-        self.assertEqual({payload["request_id"] for _kind, payload in messages}, {10, 11})
+            latest = {}
+            while len(latest) < 2 or not all(item.get("complete") for item in latest.values()):
+                _kind, payload = events.get(timeout=2)
+                latest[payload["request_id"]] = payload
+            messages = list(latest.items())
+        self.assertEqual(len(calls), len(SEARCH_BACKENDS) * SEARCH_QUERY_COUNT)
+        self.assertEqual(set(calls), {"Name a river"})
+        self.assertEqual({request_id for request_id, _payload in messages}, {10, 11})
 
 
 if __name__ == "__main__":

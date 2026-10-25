@@ -10,6 +10,7 @@ from tkinter import ttk
 from .background_worker import SearchWorker, result_is_current
 from .browser_manager import BrowserMonitor
 from .prompt_detector import normalize_prompt
+from .learned_answers import remember
 from .site_adapters import ADAPTERS
 
 
@@ -36,7 +37,12 @@ class KrillionSolverApp(tk.Tk):
         self.search_status = tk.StringVar(value="Waiting for a prompt")
         self.prompt_var = tk.StringVar(value="No prompt detected yet")
         self.query_var = tk.StringVar(value="")
+        self.learned_answer_var = tk.StringVar(value="")
+        self.current_candidates: list[dict] = []
         self._build()
+        self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
+        self.bind_all("<Button-4>", lambda event: self._route_scroll_button(event, -1), add="+")
+        self.bind_all("<Button-5>", lambda event: self._route_scroll_button(event, 1), add="+")
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.after(100, self._poll_events)
 
@@ -77,6 +83,11 @@ class KrillionSolverApp(tk.Tk):
         self.query_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.query_value = ttk.Label(prompt, textvariable=self.query_var, wraplength=590)
         self.query_value.grid(row=2, column=0, sticky="w")
+        learn_row = ttk.Frame(prompt)
+        learn_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        learn_row.columnconfigure(0, weight=1)
+        ttk.Entry(learn_row, textvariable=self.learned_answer_var).grid(row=0, column=0, sticky="ew")
+        ttk.Button(learn_row, text="Remember confirmed answer", command=self._remember_answer).grid(row=0, column=1, padx=(6, 0))
 
         actions = ttk.Frame(self, padding=(10, 4))
         actions.grid(row=3, column=0, sticky="ew")
@@ -93,7 +104,7 @@ class KrillionSolverApp(tk.Tk):
         ideas_frame.grid_propagate(False)
         ideas_frame.rowconfigure(0, weight=1)
         ideas_frame.columnconfigure(0, weight=1)
-        self.ideas_canvas = tk.Canvas(ideas_frame, height=175, highlightthickness=0)
+        self.ideas_canvas = tk.Canvas(ideas_frame, height=175, highlightthickness=0, yscrollincrement=24)
         ideas_scrollbar = ttk.Scrollbar(ideas_frame, orient="vertical", command=self.ideas_canvas.yview)
         self.ideas_canvas.configure(yscrollcommand=ideas_scrollbar.set)
         self.ideas_canvas.grid(row=0, column=0, sticky="nsew")
@@ -111,7 +122,7 @@ class KrillionSolverApp(tk.Tk):
         results_frame.grid_remove()
         results_frame.rowconfigure(0, weight=1)
         results_frame.columnconfigure(0, weight=1)
-        self.results_canvas = tk.Canvas(results_frame, highlightthickness=0)
+        self.results_canvas = tk.Canvas(results_frame, highlightthickness=0, yscrollincrement=48)
         scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=self.results_canvas.yview)
         self.results_canvas.configure(yscrollcommand=scrollbar.set)
         self.results_canvas.grid(row=0, column=0, sticky="nsew")
@@ -221,6 +232,7 @@ class KrillionSolverApp(tk.Tk):
         if normalize_prompt(prompt) == normalize_prompt(self.current_prompt):
             return
         self.current_prompt = prompt
+        self.current_candidates = []
         self.prompt_var.set(prompt)
         self.query_var.set(prompt.rstrip("?.! "))
         self.request_id += 1
@@ -228,6 +240,27 @@ class KrillionSolverApp(tk.Tk):
         if self.auto_search.get():
             self.search_worker.request(prompt, self.request_id)
             self.search_status.set("Searching…")
+
+    def _remember_answer(self) -> None:
+        answer = self.learned_answer_var.get()
+        if not self.current_prompt:
+            self.search_status.set("Wait for a prompt before saving an answer")
+            return
+        if not remember(self.current_prompt, answer):
+            self.search_status.set("Enter an answer of 1 to 100 characters")
+            return
+        self.learned_answer_var.set("")
+        if not any(item.get("answer", "").casefold() == answer.strip().casefold() for item in self.current_candidates):
+            self.current_candidates.insert(0, {
+                "answer": " ".join(answer.split()),
+                "evidence": "Previously entered and confirmed by you for this prompt.",
+                "evidence_status": "You confirmed this answer",
+                "evidence_score": 0,
+                "source_count": 0,
+                "sources": [],
+            })
+        self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith("Searching"))
+        self.search_status.set("Saved answer for this prompt")
 
     def refresh_search(self) -> None:
         if not self.current_prompt:
@@ -247,6 +280,9 @@ class KrillionSolverApp(tk.Tk):
         self.sources_toggle.configure(text=f"{marker} Sources (0)")
 
     def _render_candidates(self, candidates: list[dict], searching: bool = False) -> None:
+        self.current_candidates = list(candidates)
+        for child in self.ideas_inner.winfo_children():
+            child.destroy()
         if not candidates:
             message = "Searching for evidence-supported candidates…" if searching else "No reliable answer could be identified from the available evidence."
             ttk.Label(self.ideas_inner, text=message).pack(anchor="w", padx=6, pady=6)
@@ -263,6 +299,31 @@ class KrillionSolverApp(tk.Tk):
                 evidence = f"Snippet-supported · {source_count} independent source{'s' if source_count != 1 else ''}"
             evidence += f" · {candidate.get('evidence_score', 0)} evidence points"
             ttk.Label(self.ideas_inner, text=evidence, foreground="#555").pack(anchor="w", padx=24)
+
+    def _scroll_canvas_under_pointer(self, event) -> tk.Canvas | None:
+        widget = self.winfo_containing(event.x_root, event.y_root)
+        while widget is not None:
+            if widget is self.ideas_canvas or widget is self.results_canvas:
+                return widget
+            widget = getattr(widget, "master", None)
+        return None
+
+    def _route_mousewheel(self, event):
+        canvas = self._scroll_canvas_under_pointer(event)
+        if canvas is None:
+            return None
+        delta = getattr(event, "delta", 0)
+        if delta:
+            canvas.yview_scroll(-1 if delta > 0 else 1, "units")
+            return "break"
+        return None
+
+    def _route_scroll_button(self, event, direction: int):
+        canvas = self._scroll_canvas_under_pointer(event)
+        if canvas is not None:
+            canvas.yview_scroll(direction, "units")
+            return "break"
+        return None
 
     def _copy_answer(self, answer: str) -> None:
         self.clipboard_clear()
@@ -291,6 +352,9 @@ class KrillionSolverApp(tk.Tk):
             card.pack(fill="x", pady=4)
             title = ttk.Label(card, text=result["title"], font=("Segoe UI", 10, "bold"), wraplength=560, justify="left")
             title.pack(anchor="w")
+            providers = result.get("search_providers") or ([result["search_provider"]] if result.get("search_provider") else [])
+            if providers:
+                ttk.Label(card, text=f"Found via {', '.join(providers)}", foreground="#555").pack(anchor="w")
             if result.get("snippet"):
                 ttk.Label(card, text=result["snippet"], wraplength=560, justify="left").pack(anchor="w", pady=(3, 0))
             actions = ttk.Frame(card)
@@ -312,7 +376,7 @@ class KrillionSolverApp(tk.Tk):
                 status += " · one search unavailable"
             self.search_status.set(status)
         elif error and not payload.get("results"):
-            self.search_status.set("Search unavailable")
+            self.search_status.set("Answers ready · web search unavailable" if payload.get("candidates") else "Search unavailable")
         elif not payload.get("results"):
             self.search_status.set("No results found")
         elif not payload.get("candidates"):

@@ -22,7 +22,9 @@ Tkinter comes with the standard Windows Python installer. If `tkinter` is missin
 4. Use **Refresh Search** to search the current prompt again. **Clear Results** clears the displayed candidates and sources. Expand **Sources** to review page titles, snippets, and links.
 5. **Restart** closes and reopens the monitored browser. **Always on top** is optional. **Diagnostics** shows the page text, selected prompt, detection method, current URL, and errors.
 
-Searches run off the Tkinter thread; outdated prompt results are ignored, repeated prompt detections do not trigger new searches, and identical concurrent requests are shared. Three complementary DDGS queries run concurrently against the Bing backend with four results per query, a ten-second HTTP timeout, and a 30-second request limit. The client uses a certificate bundle rather than relying on the Windows user certificate store. Candidate names are extracted deterministically from titles and snippets, deduplicated, and ranked by snippet support from independent domains, query relevance, and broad-to-niche search stage. The cache stores successful pages and extracted candidates for 10 minutes. Defaults can be configured with `KRILLION_SEARCH_TIMEOUT_SECONDS`, `KRILLION_SEARCH_WALL_TIMEOUT_SECONDS`, `KRILLION_SEARCH_RESULTS_PER_QUERY`, and `KRILLION_DDGS_BACKEND`. Failed searches are not automatically retried; a 60-second cooldown prevents repeated automatic attempts, while **Refresh Search** retries immediately.
+Searches run off the Tkinter thread; outdated prompt results are ignored, repeated prompt detections do not trigger new searches, and identical concurrent requests are shared. Five complementary query variants run against each configured DDGS provider concurrently (15 searches by default: Bing, Google, and Brave, with four pages per search). Results update as searches finish, duplicate pages are merged, and Sources shows which provider returned each page. A ten-second HTTP timeout and 30-second per-search limit cap provider delays. Candidate names are extracted deterministically from titles and snippets, deduplicated, and ranked by evidence from independent domains and relevance; provider repetition alone does not count as independent evidence. The cache stores successful pages and extracted candidates for 10 minutes. Defaults can be configured with `KRILLION_SEARCH_TIMEOUT_SECONDS`, `KRILLION_SEARCH_WALL_TIMEOUT_SECONDS`, `KRILLION_SEARCH_RESULTS_PER_QUERY`, and `KRILLION_DDGS_BACKENDS` (comma-separated; the older `KRILLION_DDGS_BACKEND` setting still selects one provider). Failed searches are not automatically retried; a 60-second cooldown prevents repeated automatic attempts, while **Refresh Search** retries immediately.
+
+If Ollama is running locally, the app also asks the `krillion-fast` model for a concise first guess and optional alternatives. It labels model suggestions unverified and checks supported constraints/exclusions; web evidence remains separate. Set `KRILLION_OLLAMA_MODEL` to another installed Ollama model tag, or to an empty string to disable it. Set `OLLAMA_HOST` only if your local Ollama server uses a non-default address. See [training/README.md](training/README.md) for the optional Llama 3.1 fine-tuning workflow.
 
 ### Running it as an overlay
 
@@ -69,8 +71,14 @@ app/
   prompt_detector.py
   site_adapters.py
   search_provider.py
+  ollama_provider.py
+  answer_lexicon.py
+  learned_answers.py
   search_cache.py
   background_worker.py
   ui.py
+training/
+  finetune_krillion.py
+  trivia_data.jsonl
 tests/
 ```

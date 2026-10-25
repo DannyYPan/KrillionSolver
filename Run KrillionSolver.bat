@@ -25,6 +25,13 @@ if not exist ".venv\.krill_ready" (
     type nul > ".venv\.krill_ready"
 )
 
+".venv\Scripts\python.exe" -c "import cmudict" >nul 2>nul
+if errorlevel 1 (
+    echo Installing the local word dictionary...
+    ".venv\Scripts\python.exe" -m pip install "cmudict>=1.0.32"
+    if errorlevel 1 goto :failed
+)
+
 echo Starting KrillionSolver...
 ".venv\Scripts\python.exe" prompt_assistant.py
 if errorlevel 1 goto :failed

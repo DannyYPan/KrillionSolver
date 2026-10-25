@@ -3,7 +3,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from app.search_provider import extract_candidates, make_query, search
+from app.search_provider import extract_candidates, make_query, search, split_prompt_exclusions
 
 
 class SearchProviderTests(unittest.TestCase):
@@ -25,7 +25,30 @@ class SearchProviderTests(unittest.TestCase):
         self.assertEqual(init_kwargs["timeout"], 10)
         self.assertTrue(init_kwargs["verify"].endswith("cacert.pem"))
         self.assertEqual(fake.kwargs, {"region": "us-en", "max_results": 4, "backend": "bing"})
-        self.assertEqual(result[0], {"title": "A", "snippet": "A snippet", "url": "https://example.org"})
+        self.assertEqual(result[0], {"title": "A", "snippet": "A snippet", "url": "https://example.org", "search_provider": "bing"})
+
+    def test_exclusion_is_removed_from_queries_and_candidate_answers(self):
+        prompt = "Name a European country — France doesn't count"
+        self.assertEqual(split_prompt_exclusions(prompt), ("Name a European country", ["France"]))
+        self.assertEqual(make_query(prompt), "examples of European countries")
+        candidates = extract_candidates([{
+            "title": "European countries",
+            "snippet": "Examples include France, Italy, and Spain.",
+            "url": "https://example.org/countries",
+        }], prompt=prompt)
+        answers = [item["answer"] for item in candidates]
+        self.assertNotIn("France", answers)
+        self.assertIn("Italy", answers)
+        self.assertIn("Spain", answers)
+
+    def test_extracts_named_answer_from_a_category_fact_sentence(self):
+        candidates = extract_candidates([{
+            "title": "Popular Dog Breeds",
+            "snippet": "The beagle is a breed of dog known for a strong sense of smell.",
+            "url": "https://example.org/beagle",
+        }], prompt="Name a dog breed")
+        self.assertIn("beagle", [item["answer"].casefold() for item in candidates])
+        self.assertNotIn("Popular Dog Breeds", [item["answer"] for item in candidates])
 
     def test_extracts_only_snippet_supported_candidates(self):
         result = extract_candidates([{
@@ -101,6 +124,14 @@ class SearchProviderTests(unittest.TestCase):
         matches = [item for item in result if item["answer"].casefold().replace("  ", " ") == "golden retrievers"]
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0]["source_count"], 2)
+
+    def test_deduplicates_singular_plural_and_punctuation_variants(self):
+        result = extract_candidates([
+            {"title": "Bread", "snippet": "Examples include bread, breads, and Bread!.", "url": "https://one.example/a"},
+            {"title": "Bread examples", "snippet": "Other types include BREAD.", "url": "https://two.example/a"},
+        ], prompt="Name a food")
+        matches = [item for item in result if item["answer"].casefold().rstrip("!.") in {"bread", "breads"}]
+        self.assertEqual(len(matches), 1)
 
     def test_title_candidate_is_never_marked_as_verified(self):
         result = extract_candidates([{

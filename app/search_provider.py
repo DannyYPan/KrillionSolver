@@ -7,6 +7,8 @@ import re
 import threading
 import time
 
+from .answer_lexicon import satisfies_constraint
+
 
 def _pluralize(word: str) -> str:
     irregular = {"person": "people", "child": "children", "man": "men", "woman": "women", "mouse": "mice", "goose": "geese", "tooth": "teeth", "foot": "feet", "fish": "fish", "sheep": "sheep", "deer": "deer", "species": "species", "series": "series"}
@@ -24,7 +26,35 @@ def _pluralize(word: str) -> str:
     return word + "s"
 
 
+_DOES_NOT_COUNT = r"(?:doesn't|does not|doesnt|don't|do not|isn't|is not)\s+count"
+
+
+def split_prompt_exclusions(prompt: str) -> tuple[str, list[str]]:
+    """Return the actual category prompt and explicit items the game excludes."""
+    patterns = (
+        re.compile(rf"\s*\((?P<excluded>[^()]*)\s+{_DOES_NOT_COUNT}\b[^)]*\)\s*$", re.I),
+        re.compile(rf"\s+(?:[—–-]\s+|;\s*|,\s*)(?P<excluded>.+?)\s+{_DOES_NOT_COUNT}\b[^.!?]*[.!?]*$", re.I),
+        re.compile(r"\s+\b(?:excluding|except for|except|but not|not including)\s+(?P<excluded>[^.!?;]+)[.!?]*$", re.I),
+    )
+    core = prompt.strip()
+    excluded: list[str] = []
+    for pattern in patterns:
+        match = pattern.search(core)
+        if not match:
+            continue
+        raw = match.group("excluded")
+        raw = re.sub(r"^\s*but\s+", "", raw, flags=re.I)
+        excluded.extend(
+            re.sub(r"^(?:a|an|the)\s+", "", part.strip(" .,!?:;—–-"), flags=re.I)
+            for part in re.split(r",|\band\b|\bor\b", raw, flags=re.I)
+        )
+        core = core[:match.start()].rstrip(" ,;—–-")
+        break
+    return core, [item for item in excluded if item]
+
+
 def make_query(prompt: str, niche_level: int = 0) -> str:
+    prompt, _excluded = split_prompt_exclusions(prompt)
     original = prompt.strip().rstrip("?.! ")
     topic = re.sub(
         r"^(?:name|list|give me|think of|come up with)\s+(?:me\s+)?(?:a|an|the|something|someone|one|any|another|one more)\s+",
@@ -35,21 +65,31 @@ def make_query(prompt: str, niche_level: int = 0) -> str:
     topic = re.sub(r"^(?:what|which|who|where|when|why|how)\s+(?:(?:is|are|was|were|do|does|did)\s+)?", "", topic, flags=re.IGNORECASE)
     topic = re.sub(r"^(?:a|an|the)\s+", "", topic, flags=re.IGNORECASE)
     topic = topic if topic.casefold() != original.casefold() else original or prompt.strip()
-    topic = re.sub(
-        r"^(.*?)([A-Za-z]+)(?=\s+(?:in|on|at|from|near|within|of|for|with|that|which)\b|$)",
-        lambda match: match.group(1) + _pluralize(match.group(2)),
+    has_qualifier = re.search(
+        r"\b(?:in|on|at|from|near|within|of|for|with|that|which|who|by|made|written|directed|located|found|starts?|ends?)\b",
         topic,
-        count=1,
+        re.IGNORECASE,
     )
+    if not has_qualifier:
+        topic = re.sub(r"([A-Za-z]+)$", lambda match: _pluralize(match.group(1)), topic)
     if niche_level <= 0:
         return f"examples of {topic}"
     if niche_level == 1:
-        return f"unusual examples of {topic}"
-    return f"rare lesser-known examples of {topic}"
+        return f"specific named examples of {topic}"
+    if niche_level == 2:
+        return f"unusual lesser-known examples of {topic}"
+    if niche_level == 3:
+        return f"list of {topic} names"
+    return f"\"examples include\" {topic}"
 
 
 _LIST_PHRASE = re.compile(
     r"\b(?:such as|including|include|includes|examples include|examples are|for example|e\.g\.)\s+([^.!?]{3,180})",
+    re.IGNORECASE,
+)
+_FACT_SENTENCE = re.compile(
+    r"\b(?:the\s+)?([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,4})\s+"
+    r"(?:is|was|are|were|lies|flows)\s+(?:an?\s+|the\s+)?([^.!?]{2,120})",
     re.IGNORECASE,
 )
 _TYPE_OF = re.compile(r"\b([A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*){0,4})\s+is\s+(?:a|an)\s+type\s+of\s+([\w -]{2,50})", re.IGNORECASE)
@@ -58,8 +98,9 @@ _NUMBERED_ITEM = re.compile(r"(?:^|\s)(?:\d{1,2}[.)]|[-*•])\s*([A-Z][^.!?]{2,9
 _LIST_CONTEXT = re.compile(r"\b(?:examples?|include|including|following|these|such as|items?)\b", re.IGNORECASE)
 _NICHE_SIGNAL = re.compile(r"\b(?:obscure|lesser[- ]known|little[- ]known|overlooked|remote|unusual|forgotten)\b", re.IGNORECASE)
 _GENERIC_TITLE = re.compile(
-    r"\b(?:list of|top \d+|guide to|examples of|best \w+|facts about|lesser[- ]known|little[- ]known|"
-    r"how to|everything you need to know|most beautiful|amazing|ultimate guide|complete guide)\b",
+    r"\b(?:list of|top \d+|guide to|examples of|best \w+|facts about|about|overview|introduction|history of|"
+    r"popular|famous|well[- ]known|lesser[- ]known|little[- ]known|"
+    r"how to|everything you need to know|most beautiful|amazing|ultimate guide|complete guide|listeners? this month|top listeners|most streamed|monthly listeners|charts|what)\b",
     re.IGNORECASE,
 )
 _WEB_NOISE = re.compile(r"\b(?:website|official site|click here|read more|learn more|homepage|wikimedia|wikipedia|commons)\b|(?:www\.|\.com\b|\.org\b|\.net\b)", re.IGNORECASE)
@@ -74,10 +115,15 @@ def _positive_env_int(name: str, default: int) -> int:
 
 SEARCH_TIMEOUT_SECONDS = _positive_env_int("KRILLION_SEARCH_TIMEOUT_SECONDS", 10)
 SEARCH_WALL_TIMEOUT_SECONDS = _positive_env_int("KRILLION_SEARCH_WALL_TIMEOUT_SECONDS", 30)
-SEARCH_BACKEND = os.environ.get("KRILLION_DDGS_BACKEND", "bing")
+_configured_backends = os.environ.get(
+    "KRILLION_DDGS_BACKENDS", os.environ.get("KRILLION_DDGS_BACKEND", "bing,google,brave")
+)
+SEARCH_BACKENDS = tuple(dict.fromkeys(part.strip().casefold() for part in _configured_backends.split(",") if part.strip())) or ("bing",)
+SEARCH_BACKEND = SEARCH_BACKENDS[0]
+SEARCH_QUERY_COUNT = 5
 SEARCH_RESULTS_PER_QUERY = _positive_env_int("KRILLION_SEARCH_RESULTS_PER_QUERY", 4)
 MAX_CANDIDATES = 12
-_search_slots = threading.BoundedSemaphore(3)
+_search_slots = threading.BoundedSemaphore(len(SEARCH_BACKENDS) * SEARCH_QUERY_COUNT)
 
 
 def _candidate_parts(text: str) -> list[str]:
@@ -93,6 +139,7 @@ def _candidate_parts(text: str) -> list[str]:
         if (
             2 <= len(value) <= 64
             and len(value.split()) <= 7
+            and value.casefold() not in {"it", "this", "that", "there", "here", "these", "those", "they"}
             and not _GENERIC_TITLE.search(value)
             and not _WEB_NOISE.search(value)
         ):
@@ -121,6 +168,11 @@ def _snippet_candidates(snippet: str, prompt: str = "") -> list[str]:
         prompt_terms = _term_set(prompt)
         if not prompt_terms or prompt_terms & _term_set(" ".join(category)):
             candidates.extend(_candidate_parts(match.group(1)))
+    prompt_terms = _term_set(prompt)
+    for match in _FACT_SENTENCE.finditer(snippet):
+        subject, predicate = match.groups()
+        if not prompt_terms or prompt_terms & _term_set(subject + " " + predicate):
+            candidates.extend(_candidate_parts(subject))
     return candidates
 
 
@@ -159,17 +211,35 @@ def _term_set(text: str) -> set[str]:
 
 
 def _candidate_key(text: str) -> str:
-    """Normalize spacing, punctuation and capitalization for duplicate matching."""
-    return " ".join(re.findall(r"[\w'-]+", text.casefold())).strip()
+    """Normalize spelling variants, punctuation, capitalization and simple plurals."""
+    invariant = {"bus", "gas", "news", "series", "species", "status"}
+    words = re.findall(r"\w+", text.casefold())
+    normalized = []
+    for word in words:
+        if word in invariant or len(word) <= 3:
+            normalized.append(word)
+        elif word.endswith("ies"):
+            normalized.append(word[:-3] + "y")
+        elif word.endswith(("ches", "shes", "xes", "zes")):
+            normalized.append(word[:-2])
+        elif word.endswith("s") and not word.endswith("ss"):
+            normalized.append(word[:-1])
+        else:
+            normalized.append(word)
+    return " ".join(normalized)
 
 
 def extract_candidates(results: list[dict[str, str]], prompt: str = "") -> list[dict[str, object]]:
     """Extract list-supported entities and label headline-only suggestions unverified."""
     found: dict[str, dict[str, object]] = {}
+    core_prompt, excluded_items = split_prompt_exclusions(prompt)
+    excluded_keys = {_candidate_key(item) for item in excluded_items}
 
     def add(candidate: str, result: dict[str, str], from_snippet: bool) -> None:
         key = _candidate_key(candidate)
-        if not key:
+        candidate_terms = _term_set(candidate)
+        prompt_terms = _term_set(core_prompt)
+        if not key or key in excluded_keys or (candidate_terms and candidate_terms.issubset(prompt_terms)) or not satisfies_constraint(candidate, core_prompt):
             return
         item = found.setdefault(key, {
             "answer": candidate,
@@ -189,6 +259,7 @@ def extract_candidates(results: list[dict[str, str]], prompt: str = "") -> list[
             "snippet": result.get("snippet", ""),
             "url": result.get("url", ""),
             "evidence_type": "snippet" if from_snippet else "title",
+            "search_providers": result.get("search_providers") or [result.get("search_provider", "")],
         }
         sources = item["sources"]
         source_key = (source["url"], source["snippet"], source["title"])
@@ -196,7 +267,7 @@ def extract_candidates(results: list[dict[str, str]], prompt: str = "") -> list[
             sources.append(source)
         stage = int(result.get("search_stage", 0))
         item["_stages"].append(stage)
-        prompt_terms = _term_set(prompt)
+        prompt_terms = _term_set(core_prompt)
         title = result.get("title", "")
         snippet = result.get("snippet", "")
         text_terms = _term_set(title + " " + snippet)
@@ -227,9 +298,9 @@ def extract_candidates(results: list[dict[str, str]], prompt: str = "") -> list[
 
     for result in results:
         snippet = result.get("snippet", "").strip()
-        for candidate in _snippet_candidates(snippet, prompt):
+        for candidate in _snippet_candidates(snippet, core_prompt):
             add(candidate, result, from_snippet=True)
-        title_candidate = _title_candidate(result.get("title", ""), prompt)
+        title_candidate = _title_candidate(result.get("title", ""), core_prompt)
         if title_candidate:
             add(title_candidate, result, from_snippet=False)
 
@@ -271,7 +342,12 @@ def extract_candidates(results: list[dict[str, str]], prompt: str = "") -> list[
     return ranked[:MAX_CANDIDATES]
 
 
-def search(prompt: str, max_results: int = SEARCH_RESULTS_PER_QUERY, niche_level: int = 0) -> list[dict[str, str]]:
+def search(
+    prompt: str,
+    max_results: int = SEARCH_RESULTS_PER_QUERY,
+    niche_level: int = 0,
+    backend: str | None = None,
+) -> list[dict[str, str]]:
     """Search with a hard wall-clock deadline, even if DDGS tries slow engines."""
     from ddgs import DDGS
     try:
@@ -291,7 +367,8 @@ def search(prompt: str, max_results: int = SEARCH_RESULTS_PER_QUERY, niche_level
     def run_search() -> None:
         try:
             outcome["results"] = DDGS(timeout=SEARCH_TIMEOUT_SECONDS, verify=certifi.where()).text(
-                make_query(prompt, niche_level), region="us-en", max_results=max_results, backend=SEARCH_BACKEND
+                make_query(prompt, niche_level), region="us-en", max_results=max_results,
+                backend=backend or SEARCH_BACKEND,
             )
         except Exception as exc:
             outcome["error"] = exc
@@ -312,5 +389,6 @@ def search(prompt: str, max_results: int = SEARCH_RESULTS_PER_QUERY, niche_level
             "title": str(item.get("title") or "Untitled result"),
             "snippet": str(item.get("body") or item.get("snippet") or ""),
             "url": str(item.get("href") or item.get("url") or ""),
+            "search_provider": backend or SEARCH_BACKEND,
         })
     return normalized[:max_results]

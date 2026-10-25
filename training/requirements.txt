@@ -1,0 +1,5 @@
+# Keep fine-tuning packages out of the lightweight desktop app environment.
+# Follow Unsloth's platform-specific setup for PyTorch/CUDA before this file.
+unsloth
+datasets
+trl
