@@ -35,8 +35,10 @@ class AnswerLexiconTests(unittest.TestCase):
 
     def test_semantic_with_prompt_is_not_misread_as_letter_containment(self):
         prompt = "Name an animal with a shell"
-        self.assertIsNone(prompt_kind(prompt))
-        self.assertEqual(local_candidates(prompt), [])
+        self.assertEqual(prompt_kind(prompt), ("trivia", "animal"))
+        answers = [item["answer"] for item in local_candidates(prompt)]
+        self.assertIn("Turtle", answers)
+        self.assertNotIn("ab", answers)
 
     def test_word_constraints_keep_unknown_matching_text_as_uncertain(self):
         fake = types.SimpleNamespace(words=lambda: ["prototype", "seafood"])
@@ -83,6 +85,53 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertTrue(satisfies_constraint("France", "Name a European country"))
         self.assertEqual(prompt_kind("Name a European country")[0], "country_region")
         self.assertTrue(local_candidates("Name a European country"))
+
+    def test_tv_character_prompts_and_show_aliases(self):
+        himym = local_candidates("Name a character from How I Met Ur Mother")
+        sponge = local_candidates("Name a character in SpongeBob SquarePants")
+        self.assertIn("Barney Stinson", [item["answer"] for item in himym])
+        self.assertIn("Patrick Star", [item["answer"] for item in sponge])
+        self.assertEqual(candidate_check("Ted Mosby", "Name a How I Met Your Mother character"), "match")
+        self.assertEqual(candidate_check("Obscure Guest", "Name a SpongeBob character"), "uncertain")
+
+    def test_sitcom_and_sitdown_comedy_wording(self):
+        for prompt in ("Name a sitcom TV show", "Name a sitdown comedy genre TV show", "Name a situation comedy television show"):
+            with self.subTest(prompt=prompt):
+                answers = local_candidates(prompt)
+                self.assertIn("Community", [item["answer"] for item in answers])
+                self.assertEqual(candidate_check("Frasier", prompt), "match")
+                self.assertEqual(candidate_check("Unknown Show", prompt), "uncertain")
+
+    def test_general_trivia_lists_and_animal_traits(self):
+        categories = {
+            "Name a musical instrument": "Oboe",
+            "Name a gemstone": "Amethyst",
+            "Name a board game": "Chess",
+            "Name a dinosaur": "Triceratops",
+            "Name a flower": "Orchid",
+            "Name a profession": "Architect",
+        }
+        for prompt, expected in categories.items():
+            with self.subTest(prompt=prompt):
+                answers = [item["answer"] for item in local_candidates(prompt, limit=20)]
+                self.assertIn(expected, answers)
+                self.assertEqual(candidate_check(expected, prompt), "match")
+        shell_answers = [item["answer"] for item in local_candidates("Name an animal with a shell", limit=20)]
+        self.assertIn("Turtle", shell_answers)
+        self.assertIn("Nautilus", shell_answers)
+        self.assertNotIn("Dog", shell_answers)
+        self.assertEqual(candidate_check("Unknown Shelled Animal", "Name an animal with a shell"), "uncertain")
+
+    def test_interjection_and_filler_word_lists_are_separate(self):
+        interjections = [item["answer"] for item in local_candidates("Name an interjection", limit=30)]
+        fillers = [item["answer"] for item in local_candidates("Name a filler word", limit=30)]
+        self.assertIn("Yikes", interjections)
+        self.assertIn("Alas", interjections)
+        self.assertIn("Uh", fillers)
+        self.assertIn("You Know", fillers)
+        self.assertNotIn("Uh", interjections)
+        self.assertEqual(candidate_check("Phew", "Name an interjection"), "match")
+        self.assertEqual(candidate_check("I Mean", "Name a filler phrase"), "match")
 
     def test_country_exclusion_applies_to_local_results(self):
         answers = local_candidates("Name a country", excluded=["Afghanistan"])

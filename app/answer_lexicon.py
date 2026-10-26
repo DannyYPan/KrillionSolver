@@ -50,6 +50,84 @@ _FLAG_COLORS = {
 _LANDLOCKED = set("Afghanistan|Armenia|Austria|Azerbaijan|Belarus|Bhutan|Bolivia|Botswana|Burkina Faso|Burundi|Central African Republic|Chad|Czechia|Eswatini|Ethiopia|Hungary|Kazakhstan|Kyrgyzstan|Laos|Lesotho|Liechtenstein|Luxembourg|Malawi|Mali|Moldova|Mongolia|Nepal|Niger|North Macedonia|Paraguay|Rwanda|San Marino|Serbia|Slovakia|South Sudan|Switzerland|Tajikistan|Turkmenistan|Uganda|Uzbekistan|Vatican City|Zambia|Zimbabwe".split("|"))
 _SMALL_POPULATION = set("Andorra|Antigua and Barbuda|Dominica|Kiribati|Liechtenstein|Marshall Islands|Monaco|Nauru|Palau|Saint Kitts and Nevis|San Marino|Seychelles|Tuvalu|Vatican City".split("|"))
 _COMMON_COUNTRIES = "United States|Canada|China|India|Brazil|Australia|Japan|Germany|France|Italy|Mexico|United Kingdom|Spain|South Korea|South Africa|Argentina|New Zealand|Sweden|Norway|Switzerland".split("|")
+_TV_CHARACTERS = {
+    "how_i_met_your_mother": (
+        "Ted Mosby", "Marshall Eriksen", "Lily Aldrin", "Barney Stinson",
+        "Robin Scherbatsky", "Tracy McConnell", "Ranjit", "Carl MacLaren",
+        "Victoria", "Quinn Garvey", "Patrice", "Stella Zinman",
+    ),
+    "spongebob": (
+        "SpongeBob SquarePants", "Patrick Star", "Squidward Tentacles",
+        "Mr. Krabs", "Sandy Cheeks", "Plankton", "Gary the Snail",
+        "Pearl Krabs", "Mrs. Puff", "Karen Plankton", "Larry the Lobster",
+        "Mermaid Man", "Barnacle Boy", "Bubble Bass",
+    ),
+}
+_SHOW_ALIASES = {
+    "how_i_met_your_mother": re.compile(r"\bhow\s+i\s+met\s+(?:your|ur)\s+mother\b", re.I),
+    "spongebob": re.compile(r"\bsponge\s*bob(?:\s+square\s*pants)?\b", re.I),
+}
+_SITCOMS = (
+    "Arrested Development", "Community", "30 Rock", "Frasier", "Cheers",
+    "Seinfeld", "The Office", "Parks and Recreation", "Brooklyn Nine-Nine",
+    "Modern Family", "Superstore", "The Good Place", "Abbott Elementary",
+    "Schitt's Creek", "It's Always Sunny in Philadelphia", "New Girl",
+    "Scrubs", "Malcolm in the Middle", "Everybody Hates Chris", "Black-ish",
+    "The IT Crowd", "Kim's Convenience", "Derry Girls", "Party Down",
+    "What We Do in the Shadows", "Ghosts", "Freaks and Geeks", "Veep",
+    "Silicon Valley", "Unbreakable Kimmy Schmidt", "Happy Endings",
+    "Fresh Off the Boat", "My Name Is Earl", "The Middle", "Mom",
+    "How I Met Your Mother", "Friends", "The Big Bang Theory",
+)
+_TV_CHARACTER_PROMPT = re.compile(r"\bcharacters?\b.*?\b(?:from|in|on)\b|\bname\b.*?\bcharacters?\b", re.I)
+_SITCOM_PROMPT = re.compile(r"\b(?:sitcom|situation\s+comedy|sit[ -]?down\s+comedy)\b", re.I)
+_TV_SHOW_PROMPT = re.compile(r"\b(?:tv|television)?\s*shows?\b", re.I)
+_TRIVIA_LISTS = {
+    "animal": "Dog|Cat|Elephant|Tiger|Lion|Giraffe|Zebra|Kangaroo|Panda|Dolphin|Whale|Shark|Octopus|Penguin|Eagle|Owl|Bat|Snake|Crocodile|Turtle|Tortoise|Snail|Crab|Lobster|Clam|Oyster|Mussel|Nautilus|Chiton|Horseshoe Crab|Armadillo|Rhinoceros|Cheetah|Leopard|Butterfly|Bee".split("|"),
+    "food": "Pizza|Taco|Sushi|Curry|Lasagna|Paella|Falafel|Ramen|Pierogi|Gnocchi|Risotto|Kimchi|Hummus|Burrito|Dumpling|Croissant|Biryani|Gazpacho|Shakshuka|Poutine".split("|"),
+    "fruit": "Apple|Banana|Orange|Mango|Papaya|Guava|Lychee|Rambutan|Durian|Persimmon|Pomegranate|Dragon Fruit|Passion Fruit|Starfruit|Boysenberry|Gooseberry|Quince|Plantain".split("|"),
+    "vegetable": "Carrot|Broccoli|Spinach|Cabbage|Turnip|Parsnip|Artichoke|Asparagus|Eggplant|Zucchini|Kohlrabi|Rutabaga|Fennel|Okra|Chard|Leek".split("|"),
+    "sport": "Soccer|Basketball|Baseball|Tennis|Cricket|Rugby|Hockey|Volleyball|Badminton|Squash|Lacrosse|Curling|Fencing|Archery|Biathlon|Handball|Water Polo".split("|"),
+    "instrument": "Piano|Guitar|Violin|Trumpet|Flute|Cello|Oboe|Bassoon|Clarinet|Trombone|Tuba|Harp|Mandolin|Sitar|Marimba|Accordion|Theremin|Bass Clarinet".split("|"),
+    "occupation": "Teacher|Doctor|Engineer|Carpenter|Plumber|Electrician|Architect|Paramedic|Geologist|Cartographer|Actuary|Arborist|Locksmith|Meteorologist|Archivist|Interpreter|Surveyor".split("|"),
+    "vehicle": "Car|Bus|Truck|Bicycle|Motorcycle|Train|Tram|Ferry|Submarine|Helicopter|Glider|Hovercraft|Gondola|Rickshaw|Snowmobile|Funicular".split("|"),
+    "flower": "Rose|Tulip|Daisy|Sunflower|Orchid|Daffodil|Chrysanthemum|Marigold|Peony|Iris|Zinnia|Begonia|Anemone|Foxglove|Snapdragon".split("|"),
+    "tree": "Oak|Maple|Pine|Birch|Willow|Cedar|Redwood|Baobab|Ginkgo|Sycamore|Dogwood|Hawthorn|Juniper|Sequoia|Eucalyptus".split("|"),
+    "planet": "Mercury|Venus|Earth|Mars|Jupiter|Saturn|Uranus|Neptune".split("|"),
+    "gemstone": "Diamond|Ruby|Sapphire|Emerald|Amethyst|Opal|Topaz|Garnet|Aquamarine|Peridot|Tourmaline|Tanzanite|Moonstone|Citrine".split("|"),
+    "board_game": "Chess|Checkers|Monopoly|Scrabble|Clue|Risk|Catan|Carcassonne|Azul|Pandemic|Stratego|Backgammon|Codenames|Ticket to Ride".split("|"),
+    "dinosaur": "Tyrannosaurus|Triceratops|Stegosaurus|Velociraptor|Brachiosaurus|Ankylosaurus|Spinosaurus|Allosaurus|Iguanodon|Parasaurolophus|Pachycephalosaurus|Deinonychus".split("|"),
+    "body_part": "Heart|Lung|Liver|Kidney|Stomach|Pancreas|Spleen|Femur|Patella|Clavicle|Scapula|Retina|Cochlea|Tendon|Ligament".split("|"),
+    "interjection": "Wow|Oh|Hey|Ouch|Oops|Alas|Hooray|Yikes|Gosh|Gee|Bravo|Bingo|Aha|Huh|Ugh|Phew|Shh|Psst|Meh|Whoa|Eureka|Darn|Drat|Jeez".split("|"),
+    "filler_word": "Um|Uh|Er|Ah|Like|Well|So|Actually|Basically|Literally|You Know|I Mean|Anyway|Right|Okay|Kind Of|Sort Of|Let Me See|You See".split("|"),
+}
+_TRIVIA_ALIASES = {
+    "animal": re.compile(r"\b(?:animal|creature)s?\b", re.I),
+    "food": re.compile(r"\bfoods?\b", re.I),
+    "fruit": re.compile(r"\bfruits?\b", re.I),
+    "vegetable": re.compile(r"\bvegetables?\b", re.I),
+    "sport": re.compile(r"\bsports?\b", re.I),
+    "instrument": re.compile(r"\b(?:musical\s+)?instruments?\b", re.I),
+    "occupation": re.compile(r"\b(?:jobs?|occupations?|professions?)\b", re.I),
+    "vehicle": re.compile(r"\bvehicles?\b", re.I),
+    "flower": re.compile(r"\bflowers?\b", re.I),
+    "tree": re.compile(r"\btrees?\b", re.I),
+    "planet": re.compile(r"\bplanets?\b", re.I),
+    "gemstone": re.compile(r"\b(?:gemstones?|gems?)\b", re.I),
+    "board_game": re.compile(r"\bboard\s+games?\b", re.I),
+    "dinosaur": re.compile(r"\bdinosaurs?\b", re.I),
+    "body_part": re.compile(r"\bbody\s+parts?\b", re.I),
+    "interjection": re.compile(r"\binterjections?\b", re.I),
+    "filler_word": re.compile(r"\b(?:filler|hesitation)\s+(?:words?|phrases?)\b", re.I),
+}
+_ANIMAL_TRAITS = {
+    "shell": {"Turtle", "Tortoise", "Snail", "Crab", "Lobster", "Clam", "Oyster", "Mussel", "Nautilus", "Chiton", "Horseshoe Crab", "Armadillo"},
+    "stripes": {"Tiger", "Zebra"},
+    "spots": {"Cheetah", "Leopard"},
+    "horn": {"Rhinoceros"},
+    "wings": {"Eagle", "Owl", "Bat", "Penguin", "Butterfly", "Bee"},
+    "scales": {"Snake", "Crocodile", "Shark"},
+}
 _FALLBACK_WORDS = set("""prototype stereotype archetype genotype phenotype subtype bloodtype prototype textile stereotype sea food seafood dogfood catfood fastfood junkfood soulfood brainfood foodtruck
 stop watch stopwatch stoplight stopgap stopover stopcock stopword non nonstop bus busstop laptop laptopcase flower sunflower football snowball airport airplane raincoat overcoat breakfast bookshelfs bookshelf toothbrush toothpaste firehouse lighthouse lighthouse keeper
 """.split()) | set(_COMMON_ENGLISH_WORDS)
@@ -94,6 +172,16 @@ def _dictionary_form(value: str) -> str:
 
 
 def prompt_kind(prompt: str) -> tuple[str, str] | None:
+    if _TV_CHARACTER_PROMPT.search(prompt):
+        for show_key, alias in _SHOW_ALIASES.items():
+            if alias.search(prompt):
+                return "tv_character", show_key
+    if _SITCOM_PROMPT.search(prompt) and _TV_SHOW_PROMPT.search(prompt):
+        return "sitcom", ""
+    if not _CONTAINS.search(prompt) and re.search(r"\b(?:name|give|list|think of|what|which)\b", prompt, re.I):
+        for trivia_key, alias in _TRIVIA_ALIASES.items():
+            if alias.search(prompt):
+                return "trivia", trivia_key
     syllable = _SYLLABLE.search(prompt)
     if syllable and re.search(r"\b(?:word|name|something|thing|answer)\b", prompt, re.I):
         raw_count = syllable.group("count").casefold()
@@ -155,6 +243,14 @@ def candidate_check(answer: str, prompt: str) -> str:
     if not kind:
         return "uncertain"
     category, value = kind
+    if category == "tv_character":
+        known = {name.casefold() for name in _TV_CHARACTERS.get(value, ())}
+        return "match" if answer.casefold().strip() in known else "uncertain"
+    if category == "sitcom":
+        return "match" if answer.casefold().strip() in {show.casefold() for show in _SITCOMS} else "uncertain"
+    if category == "trivia":
+        known = {item.casefold() for item in _qualified_trivia(prompt, value)}
+        return "match" if answer.casefold().strip() in known else "uncertain"
     if category == "syllables":
         counts = _syllable_counts().get(_dictionary_form(answer))
         if not counts:
@@ -190,7 +286,9 @@ def candidate_check(answer: str, prompt: str) -> str:
                 return "match"
         return "uncertain"
     if category == "english_word":
-        return "match" if _dictionary_form(answer) in _words() else "uncertain"
+        # Avoid loading the full CMU dictionary for an unconstrained prompt.
+        # Unknown model answers remain available rather than becoming false negatives.
+        return "match" if _dictionary_form(answer) in _FALLBACK_WORDS else "uncertain"
     return "uncertain"
 
 
@@ -199,12 +297,31 @@ def satisfies_constraint(answer: str, prompt: str) -> bool:
     return candidate_check(answer, prompt) == "match"
 
 
+def _qualified_trivia(prompt: str, category: str) -> list[str]:
+    answers = list(_TRIVIA_LISTS.get(category, ()))
+    if category == "animal":
+        lowered = prompt.casefold()
+        for trait, matching in _ANIMAL_TRAITS.items():
+            if re.search(rf"\b{re.escape(trait)}s?\b", lowered):
+                answers = [answer for answer in answers if answer in matching]
+    return answers
+
+
 def local_candidates(prompt: str, excluded: list[str] | None = None, limit: int = 8) -> list[dict[str, object]]:
     kind = prompt_kind(prompt)
     if not kind:
         return []
     category, value = kind
-    if category == "syllables":
+    if category == "tv_character":
+        answers = list(_TV_CHARACTERS.get(value, ()))[:limit]
+        source = "Local TV character list"
+    elif category == "sitcom":
+        answers = list(_SITCOMS)[:limit]
+        source = "Local sitcom list"
+    elif category == "trivia":
+        answers = _qualified_trivia(prompt, value)[:limit]
+        source = "Local general-knowledge list"
+    elif category == "syllables":
         target = int(value)
         answers = sorted(
             (word for word, counts in _syllable_counts().items() if target in counts and 3 <= len(word) <= 18),
@@ -235,10 +352,7 @@ def local_candidates(prompt: str, excluded: list[str] | None = None, limit: int 
         answers = sorted(country_source, key=lambda name: (priority.get(name, len(priority)), name))[:limit]
         source = "Local country list"
     elif category == "english_word":
-        words = _words()
-        answers = [word for word in _COMMON_ENGLISH_WORDS if word in words][:limit]
-        if len(answers) < limit:
-            answers.extend(word for word in sorted(words) if word not in answers and len(word) >= 4 and len(answers) < limit)
+        answers = list(_COMMON_ENGLISH_WORDS)[:limit]
         source = "English pronunciation dictionary"
     else:
         return []

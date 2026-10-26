@@ -6,12 +6,15 @@ import queue
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from .answer_lexicon import local_candidates
 from .ollama_provider import OLLAMA_MODEL, suggest as suggest_with_ollama
 from .prompt_detector import normalize_prompt
 from .search_cache import SearchCache
 from .prompt_constraints import split_prompt_exclusions
+
+_LEXICON_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="krillion-lexicon")
 
 
 def result_is_current(request_id: int, current_request_id: int, prompt: str, current_prompt: str) -> bool:
@@ -90,8 +93,11 @@ class SearchWorker:
                     return
 
                 _core, excluded = split_prompt_exclusions(prompt)
-                dictionary = local_candidates(prompt, excluded)
-                hints = list(dict.fromkeys(item["answer"] for item in dictionary))[:12]
+                # Run local lookup alongside the first speed-focused Ollama pass.
+                # Large dictionary/syllable data must not delay the first answer.
+                dictionary_future = _LEXICON_EXECUTOR.submit(local_candidates, prompt, excluded)
+                dictionary: list[dict] = []
+                hints: list[str] = []
                 model_candidates: list[dict] = []
                 model_error: str | None = None
 
@@ -103,6 +109,9 @@ class SearchWorker:
                     try:
                         seen_answers: set[str] = set()
                         for pass_number in range(self.MAX_OLLAMA_PASSES):
+                            if pass_number > 0 and not dictionary:
+                                dictionary = dictionary_future.result()
+                                hints = list(dict.fromkeys(item["answer"] for item in dictionary))[:12]
                             with self._lock:
                                 if self._active_key != key:
                                     break
@@ -142,6 +151,8 @@ class SearchWorker:
                         model_error = f"Ollama unavailable: {exc}"
                         self._ollama_failure_until = time.monotonic() + self.FAILURE_COOLDOWN_SECONDS
 
+                if not dictionary:
+                    dictionary = dictionary_future.result()
                 with self._lock:
                     live_exclusions = set(self._live_exclusions.get(prompt_key, set()))
                 candidates = [

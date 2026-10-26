@@ -27,7 +27,10 @@ def _parts(text: str) -> list[str]:
     return [re.sub(r"^[\s\d.)*-]+|[\s.;]+$", "", part).strip() for part in re.split(r",|\n", text) if part.strip()]
 
 
-def parse_suggestions(text: str, prompt: str, excluded_answers: list[str] | None = None) -> list[dict[str, object]]:
+def parse_suggestions(
+    text: str, prompt: str, excluded_answers: list[str] | None = None,
+    check_local: bool = True,
+) -> list[dict[str, object]]:
     if not text or re.search(r"\bUNCERTAIN\b", text, re.I):
         return []
     core, excluded = split_prompt_exclusions(prompt)
@@ -66,7 +69,7 @@ def parse_suggestions(text: str, prompt: str, excluded_answers: list[str] | None
         key = re.sub(r"\W+", " ", answer.casefold()).strip()
         if not key or key in seen or key in excluded_keys:
             continue
-        check = candidate_check(answer, core)
+        check = candidate_check(answer, core) if check_local else "uncertain"
         if check == "reject":
             continue
         seen.add(key)
@@ -129,12 +132,12 @@ def suggest(
                         stable_lines.append(line)
                     elif re.match(r"\s*MORE OPTIONS\s*:", line, re.I) and "," in line:
                         stable_lines.append(line.rsplit(",", 1)[0] + "\n")
-                partial = parse_suggestions("".join(stable_lines), prompt, excluded_answers)
+                partial = parse_suggestions("".join(stable_lines), prompt, excluded_answers, check_local=not fast)
                 answers = tuple(str(item["answer"]) for item in partial)
                 if answers != last_answers and on_update and partial:
                     on_update(partial)
                     last_answers = answers
-            final_candidates = parse_suggestions(accumulated, prompt, excluded_answers)
+            final_candidates = parse_suggestions(accumulated, prompt, excluded_answers, check_local=not fast)
             if on_update and final_candidates:
                 on_update(final_candidates)
             return final_candidates

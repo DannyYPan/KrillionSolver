@@ -141,6 +141,35 @@ class BackgroundWorkerTests(unittest.TestCase):
 
         self.assertNotIn("paris", mock_ollama.call_args.kwargs["excluded_answers"])
 
+    def test_first_ollama_pass_does_not_wait_for_local_lookup(self):
+        events = queue.Queue()
+        worker = SearchWorker(events)
+        lexicon_started = threading.Event()
+        release_lexicon = threading.Event()
+        ollama_started = threading.Event()
+
+        def slow_lexicon(*_args, **_kwargs):
+            lexicon_started.set()
+            release_lexicon.wait(timeout=2)
+            return [_candidate("Turtle")]
+
+        def quick_ollama(*_args, **kwargs):
+            if kwargs.get("fast"):
+                ollama_started.set()
+                return [_candidate("Snail")]
+            return []
+
+        with patch("app.background_worker.OLLAMA_MODEL", "test-model"), \
+                patch("app.background_worker.local_candidates", side_effect=slow_lexicon), \
+                patch("app.background_worker.suggest_with_ollama", side_effect=quick_ollama):
+            worker.request("Name an animal with a shell", 1)
+            self.assertTrue(lexicon_started.wait(timeout=1))
+            self.assertTrue(ollama_started.wait(timeout=1))
+            release_lexicon.set()
+            payload = _complete(events)
+
+        self.assertEqual(payload["candidates"][0]["answer"], "Snail")
+
 
 if __name__ == "__main__":
     unittest.main()
