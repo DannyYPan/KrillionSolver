@@ -19,6 +19,7 @@ class KrillionSolverApp(tk.Tk):
         self.title("KrillionSolver")
         self.geometry("650x680")
         self.minsize(520, 460)
+        self.configure(background="#eef2f7")
         self.compact = False
         self.events: queue.Queue = queue.Queue()
         self.search_worker = SearchWorker(self.events)
@@ -36,6 +37,7 @@ class KrillionSolverApp(tk.Tk):
         self.current_candidates: list[dict] = []
         self.rejected_answers: list[str] = []
         self.said_answers: list[str] = []
+        self._configure_styles()
         self._build()
         self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
         self.bind_all("<Button-4>", lambda event: self._route_scroll_button(event, -1), add="+")
@@ -43,10 +45,42 @@ class KrillionSolverApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.after(100, self._poll_events)
 
+    def _configure_styles(self) -> None:
+        style = ttk.Style(self)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        style.configure("App.TFrame", background="#eef2f7")
+        style.configure("Toolbar.TFrame", background="#172554")
+        style.configure(
+            "Brand.TLabel", background="#172554", foreground="#ffffff",
+            font=("Segoe UI Semibold", 16),
+        )
+        style.configure(
+            "Tagline.TLabel", background="#172554", foreground="#bfdbfe",
+            font=("Segoe UI", 9),
+        )
+        style.configure("Card.TLabelframe", background="#ffffff", borderwidth=1, relief="solid")
+        style.configure(
+            "Card.TLabelframe.Label", background="#eef2f7", foreground="#334155",
+            font=("Segoe UI Semibold", 9),
+        )
+        style.configure("Card.TFrame", background="#ffffff")
+        style.configure("Answer.TFrame", background="#ffffff", relief="solid", borderwidth=1)
+        style.configure(
+            "Answer.TLabel", background="#ffffff", foreground="#0f172a",
+            font=("Segoe UI Semibold", 10),
+        )
+        style.configure("Saved.TLabel", background="#ffffff", foreground="#15803d", font=("Segoe UI", 8))
+        style.configure("Status.TLabel", background="#eef2f7", foreground="#475569", font=("Segoe UI", 9))
+        style.configure("Primary.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6))
+        style.configure("Quiet.TButton", padding=(8, 5))
+        style.configure("Icon.TButton", padding=(4, 2), font=("Segoe UI Symbol", 10))
+        style.configure("TCheckbutton", background="#eef2f7")
+
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
-        controls = ttk.Frame(self, padding=10)
+        controls = ttk.Frame(self, padding=8, style="App.TFrame")
         self.controls_frame = controls
         controls.grid(row=0, column=0, sticky="ew")
         controls.columnconfigure(1, weight=1)
@@ -56,51 +90,56 @@ class KrillionSolverApp(tk.Tk):
         selector.bind("<<ComboboxSelected>>", self._site_changed)
         ttk.Label(controls, text="URL").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(controls, textvariable=self.url).grid(row=1, column=1, columnspan=4, sticky="ew", padx=(8, 0), pady=(8, 0))
-        buttons = ttk.Frame(controls)
+        buttons = ttk.Frame(controls, style="App.TFrame")
         buttons.grid(row=2, column=0, columnspan=5, sticky="w", pady=(10, 0))
-        ttk.Button(buttons, text="Start", command=self.start).pack(side="left")
-        ttk.Button(buttons, text="Stop", command=self.stop).pack(side="left", padx=5)
-        ttk.Button(buttons, text="Restart", command=self.restart).pack(side="left")
+        ttk.Button(buttons, text="Start", command=self.start, style="Primary.TButton").pack(side="left")
+        ttk.Button(buttons, text="Stop", command=self.stop, style="Quiet.TButton").pack(side="left", padx=4)
+        ttk.Button(buttons, text="Restart", command=self.restart, style="Quiet.TButton").pack(side="left")
         ttk.Label(buttons, text="Browser:").pack(side="left", padx=(18, 4))
         ttk.Label(buttons, textvariable=self.browser_status).pack(side="left")
 
-        options = ttk.Frame(self, padding=(10, 0, 10, 6))
+        options = ttk.Frame(self, padding=(8, 0, 8, 4), style="App.TFrame")
         self.options_frame = options
         options.grid(row=1, column=0, sticky="ew")
         ttk.Checkbutton(options, text="Automatic answers", variable=self.auto_search).pack(side="left")
         ttk.Checkbutton(options, text="Diagnostics", variable=self.diagnostics).pack(side="left")
 
-        prompt = ttk.LabelFrame(self, text="Detected prompt", padding=8)
-        prompt.grid(row=2, column=0, sticky="ew", padx=10, pady=4)
+        prompt = ttk.LabelFrame(self, text="LIVE PROMPT", padding=7, style="Card.TLabelframe")
+        prompt.grid(row=2, column=0, sticky="ew", padx=8, pady=3)
         prompt.columnconfigure(0, weight=1)
-        self.prompt_label = ttk.Label(prompt, textvariable=self.prompt_var, wraplength=590, justify="left")
+        self.prompt_label = ttk.Label(
+            prompt, textvariable=self.prompt_var, wraplength=590, justify="left",
+            background="#ffffff", foreground="#0f172a", font=("Segoe UI Semibold", 10),
+        )
         self.prompt_label.grid(row=0, column=0, sticky="ew")
-        actions = ttk.Frame(self, padding=(10, 4, 10, 8))
+        actions = ttk.Frame(self, padding=(8, 2, 8, 6), style="App.TFrame")
         actions.grid(row=3, column=0, sticky="ew")
         actions.columnconfigure(0, weight=1)
-        ttk.Label(actions, textvariable=self.search_status, anchor="w").grid(
-            row=0, column=0, columnspan=4, sticky="ew", pady=(0, 6)
+        ttk.Label(actions, textvariable=self.search_status, anchor="w", style="Status.TLabel").grid(
+            row=0, column=0, columnspan=4, sticky="ew", pady=(0, 3)
         )
-        ttk.Button(actions, text="Refresh Answer", command=self.refresh_search).grid(row=1, column=0, sticky="w")
-        ttk.Button(actions, text="Clear", command=self.clear_results).grid(row=1, column=1, sticky="w", padx=6)
-        self.view_button = ttk.Button(actions, text="Compact view", command=self._toggle_compact)
+        ttk.Button(actions, text="Refresh", command=self.refresh_search, style="Primary.TButton").grid(row=1, column=0, sticky="w")
+        ttk.Button(actions, text="Clear", command=self.clear_results, style="Quiet.TButton").grid(row=1, column=1, sticky="w", padx=4)
+        self.view_button = ttk.Button(actions, text="Compact", command=self._toggle_compact, style="Quiet.TButton")
         self.view_button.grid(row=1, column=2, sticky="e", padx=6)
         ttk.Checkbutton(actions, text="Always on top", variable=self.always_on_top, command=self._top_changed).grid(
             row=1, column=3, sticky="e"
         )
 
-        ideas_frame = ttk.LabelFrame(self, text="Answers", padding=6)
+        ideas_frame = ttk.LabelFrame(self, text="ANSWERS", padding=5, style="Card.TLabelframe")
         self.ideas_frame = ideas_frame
-        ideas_frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        ideas_frame.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 8))
         ideas_frame.grid_propagate(False)
         ideas_frame.rowconfigure(0, weight=1)
         ideas_frame.columnconfigure(0, weight=1)
-        self.ideas_canvas = tk.Canvas(ideas_frame, height=175, highlightthickness=0, yscrollincrement=24)
+        self.ideas_canvas = tk.Canvas(
+            ideas_frame, height=175, highlightthickness=0, yscrollincrement=24, background="#ffffff",
+        )
         ideas_scrollbar = ttk.Scrollbar(ideas_frame, orient="vertical", command=self.ideas_canvas.yview)
         self.ideas_canvas.configure(yscrollcommand=ideas_scrollbar.set)
         self.ideas_canvas.grid(row=0, column=0, sticky="nsew")
         ideas_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.ideas_inner = ttk.Frame(self.ideas_canvas)
+        self.ideas_inner = ttk.Frame(self.ideas_canvas, style="Card.TFrame")
         self.ideas_window = self.ideas_canvas.create_window((0, 0), window=self.ideas_inner, anchor="nw")
         self.ideas_inner.bind("<Configure>", lambda _e: self.ideas_canvas.configure(scrollregion=self.ideas_canvas.bbox("all")))
         self.ideas_canvas.bind("<Configure>", lambda e: self.ideas_canvas.itemconfigure(self.ideas_window, width=e.width))
@@ -127,8 +166,8 @@ class KrillionSolverApp(tk.Tk):
             self.rowconfigure(4, weight=1)
             self.ideas_frame.grid_configure(sticky="nsew")
             self.prompt_label.configure(wraplength=350)
-            self.geometry("500x430")
-            self.minsize(450, 350)
+            self.geometry("440x340")
+            self.minsize(390, 290)
             self.view_button.configure(text="Full view")
         else:
             self.controls_frame.grid()
@@ -138,9 +177,9 @@ class KrillionSolverApp(tk.Tk):
             self.prompt_label.configure(wraplength=590)
             self.geometry("650x680")
             self.minsize(520, 460)
-            self.view_button.configure(text="Compact view")
+            self.view_button.configure(text="Compact")
             self._show_diagnostics()
-        self.ideas_frame.configure(height=275 if enabled else 195)
+        self.ideas_frame.configure(height=210 if enabled else 195)
 
     def _site_changed(self, _event=None) -> None:
         self.url.set(ADAPTERS[self.site.get()].default_url)
@@ -287,24 +326,24 @@ class KrillionSolverApp(tk.Tk):
             ttk.Label(self.ideas_inner, text=message).pack(anchor="w", padx=6, pady=6)
             return
         for number, candidate in enumerate(candidates, start=1):
-            card = ttk.Frame(self.ideas_inner, padding=(6, 2))
-            card.pack(fill="x", anchor="w")
-            name = ttk.Label(card, text=f"{number}. {candidate['answer']}", font=("Segoe UI", 10, "bold"))
+            card = ttk.Frame(self.ideas_inner, padding=(6, 3), style="Answer.TFrame")
+            card.pack(fill="x", anchor="w", padx=1, pady=1)
+            name = ttk.Label(card, text=f"{number}. {candidate['answer']}", style="Answer.TLabel")
             name.pack(side="left", anchor="w")
             ttk.Button(
-                card, text="⧉", width=3,
+                card, text="⧉", width=3, style="Icon.TButton",
                 command=lambda answer=candidate["answer"]: self._copy_answer(answer),
             ).pack(side="right")
             ttk.Button(
-                card, text="✓", width=3,
+                card, text="✓", width=3, style="Icon.TButton",
                 command=lambda answer=candidate["answer"]: self._save_confirmed_answer(answer),
             ).pack(side="right", padx=(0, 4))
             ttk.Button(
-                card, text="✕", width=3,
+                card, text="✕", width=3, style="Icon.TButton",
                 command=lambda answer=candidate["answer"]: self._reject_answer(answer),
             ).pack(side="right", padx=(0, 4))
             if candidate.get("confirmed"):
-                ttk.Label(self.ideas_inner, text="✓ Saved", foreground="#287a3d").pack(anchor="w", padx=24)
+                ttk.Label(card, text="saved", style="Saved.TLabel").pack(side="left", padx=(5, 0))
 
     def _remove_said_answers(self, page_text: str, detected_prompt: str | None) -> None:
         if not self.current_prompt or normalize_prompt(detected_prompt or "") != normalize_prompt(self.current_prompt):

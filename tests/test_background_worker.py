@@ -70,7 +70,9 @@ class BackgroundWorkerTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
 
-        def delayed_suggest(prompt, hints=None, excluded_answers=None, on_update=None, fast=False):
+        def delayed_suggest(
+            prompt, hints=None, excluded_answers=None, on_update=None, fast=False, prefer_rare=False,
+        ):
             entered.set()
             release.wait(timeout=2)
             return [_candidate("Paris")]
@@ -106,8 +108,24 @@ class BackgroundWorkerTests(unittest.TestCase):
         self.assertEqual(mock_ollama.call_count, 3)
         self.assertTrue(mock_ollama.call_args_list[0].kwargs["fast"])
         self.assertFalse(mock_ollama.call_args_list[1].kwargs["fast"])
+        self.assertFalse(mock_ollama.call_args_list[0].kwargs["prefer_rare"])
+        self.assertTrue(mock_ollama.call_args_list[1].kwargs["prefer_rare"])
         self.assertIn("Paris", mock_ollama.call_args_list[1].kwargs["excluded_answers"])
         self.assertIn("Lyon", mock_ollama.call_args_list[2].kwargs["excluded_answers"])
+
+    def test_puffer_party_never_requests_rarity_mode(self):
+        events = queue.Queue()
+        worker = SearchWorker(events)
+        returned = iter([[_candidate("Paris")], [_candidate("Lyon")], []])
+        with patch("app.background_worker.OLLAMA_MODEL", "test-model"), \
+                patch(
+                    "app.background_worker.suggest_with_ollama",
+                    side_effect=lambda *args, **kwargs: next(returned),
+                ) as mock_ollama:
+            worker.request("Name a city", 1, mode="Puffer Party")
+            _complete(events)
+        self.assertTrue(mock_ollama.call_args_list[0].kwargs["fast"])
+        self.assertTrue(all(not call.kwargs["prefer_rare"] for call in mock_ollama.call_args_list))
 
     def test_disabled_ollama_uses_dictionary_fallback(self):
         events = queue.Queue()
@@ -170,7 +188,39 @@ class BackgroundWorkerTests(unittest.TestCase):
             release_lexicon.set()
             payload = _complete(events)
 
-        self.assertEqual(payload["candidates"][0]["answer"], "Snail")
+        answers = [item["answer"] for item in payload["candidates"]]
+        self.assertIn("Turtle", answers)
+        self.assertIn("Snail", answers)
+
+    def test_local_lexicon_is_emitted_while_ollama_keeps_running(self):
+        events = queue.Queue()
+        worker = SearchWorker(events)
+        ollama_started = threading.Event()
+        release_ollama = threading.Event()
+
+        def slow_ollama(*_args, **_kwargs):
+            ollama_started.set()
+            release_ollama.wait(timeout=2)
+            return [_candidate("Snail")]
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict(os.environ, {"LOCALAPPDATA": directory}), \
+                patch("app.background_worker.OLLAMA_MODEL", "test-model"), \
+                patch("app.background_worker.suggest_with_ollama", side_effect=slow_ollama):
+            worker.request("Name an animal with a shell", 1)
+            local_payload = None
+            while local_payload is None:
+                kind, payload = events.get(timeout=2)
+                if kind == "search" and payload.get("source") == "local":
+                    local_payload = payload
+            self.assertFalse(local_payload["complete"])
+            self.assertIn("Turtle", [item["answer"] for item in local_payload["candidates"]])
+            self.assertTrue(ollama_started.is_set())
+            release_ollama.set()
+            complete = _complete(events)
+            final_answers = [item["answer"] for item in complete["candidates"]]
+            self.assertIn("Turtle", final_answers)
+            self.assertIn("Snail", final_answers)
 
     def test_saved_answer_is_emitted_before_ollama_finishes(self):
         events = queue.Queue()

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import threading
 from pathlib import Path
 
-from .answer_history import accepted as accepted_history, record
+from .answer_history import accepted as accepted_history, import_record, record
 from .prompt_detector import normalize_prompt
 
 _lock = threading.Lock()
+_migration_attempted: set[Path] = set()
 
 
 def _training_path() -> Path:
@@ -25,10 +27,30 @@ def _rejected_path() -> Path:
     return root / "KrillionSolver" / "rejected_answers.jsonl"
 
 
+def _migration_marker() -> Path:
+    return _training_path().parent / ".answer_history_migrated"
+
+
 def _rows() -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     try:
         with _training_path().open(encoding="utf-8") as data_file:
+            for line in data_file:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and isinstance(row.get("prompt"), str) and isinstance(row.get("answer"), str):
+                    rows.append({"prompt": row["prompt"], "answer": row["answer"]})
+    except (OSError, sqlite3.Error):
+        pass
+    return rows
+
+
+def _read_feedback_rows(path: Path) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    try:
+        with path.open(encoding="utf-8") as data_file:
             for line in data_file:
                 try:
                     row = json.loads(line)
@@ -41,15 +63,39 @@ def _rows() -> list[dict[str, str]]:
     return rows
 
 
+def _ensure_history_migrated() -> None:
+    """Import existing JSONL once, then allow database edits to remain authoritative."""
+    marker = _migration_marker()
+    if marker in _migration_attempted or marker.exists():
+        return
+    _migration_attempted.add(marker)
+    try:
+        for row in _rows():
+            import_record(row["prompt"], row["answer"], "accepted")
+        for row in _read_feedback_rows(_rejected_path()):
+            import_record(row["prompt"], row["answer"], "rejected")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except (OSError, sqlite3.Error):
+        # Local history improves answers but must never prevent dictionary or
+        # Ollama generation when the profile directory is unavailable.
+        return
+
+
+def migrate_legacy_history() -> None:
+    """Public startup hook used by the history manager."""
+    with _lock:
+        _ensure_history_migrated()
+
+
 def get_learned(
     prompt: str, excluded: list[str] | None = None, mode: str = "Krillion",
 ) -> list[str]:
     """Read accepted structured history plus legacy JSONL training examples."""
-    key = normalize_prompt(prompt)
     excluded_keys = {value.casefold().strip() for value in (excluded or [])}
     with _lock:
+        _ensure_history_migrated()
         answers = accepted_history(prompt, mode=mode, excluded=excluded)
-        answers.extend(row["answer"] for row in _rows() if normalize_prompt(row["prompt"]) == key)
     return list(dict.fromkeys(answer for answer in answers if answer.casefold().strip() not in excluded_keys))
 
 

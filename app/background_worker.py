@@ -106,13 +106,38 @@ class SearchWorker:
                     emit(learned_candidates, False, None, "learned")
                 # Run local lookup alongside the first speed-focused Ollama pass.
                 # Large dictionary/syllable data must not delay the first answer.
+                local_exclusions = list(excluded) + list(excluded_answers or [])
                 dictionary_future = _LEXICON_EXECUTOR.submit(
-                    local_candidates, prompt, excluded, 8, mode=mode_key
+                    local_candidates, prompt, local_exclusions, 8, mode=mode_key
                 )
                 dictionary: list[dict] = []
                 hints: list[str] = []
                 model_candidates: list[dict] = []
                 model_error: str | None = None
+                generation_complete = threading.Event()
+
+                def merge_candidates(*groups: list[dict]) -> list[dict]:
+                    merged: list[dict] = []
+                    seen: set[str] = set()
+                    for group in groups:
+                        for item in group:
+                            answer_key = item["answer"].casefold().strip()
+                            if answer_key and answer_key not in seen:
+                                seen.add(answer_key)
+                                merged.append(item)
+                    return merged
+
+                def publish_dictionary(future) -> None:
+                    if generation_complete.is_set():
+                        return
+                    try:
+                        ready = future.result()
+                    except Exception:
+                        return
+                    if ready:
+                        emit(merge_candidates(learned_candidates, ready, model_candidates), False, None, "local")
+
+                dictionary_future.add_done_callback(publish_dictionary)
 
                 if not OLLAMA_MODEL:
                     model_error = "Ollama is disabled."
@@ -132,11 +157,9 @@ class SearchWorker:
                             previous_count = len(model_candidates)
 
                             def publish_partial(partial: list[dict]) -> None:
-                                combined = list(learned_candidates) + list(model_candidates)
-                                combined_keys = {item["answer"].casefold().strip() for item in combined}
-                                combined.extend(
-                                    item for item in partial
-                                    if item["answer"].casefold().strip() not in combined_keys
+                                ready_dictionary = dictionary_future.result() if dictionary_future.done() else []
+                                combined = merge_candidates(
+                                    learned_candidates, ready_dictionary, model_candidates, partial,
                                 )
                                 emit(combined, False, None, "ollama")
 
@@ -150,6 +173,7 @@ class SearchWorker:
                                 ),
                                 on_update=publish_partial,
                                 fast=pass_number == 0,
+                                prefer_rare=mode_key == "Krillion" and pass_number > 0,
                             )
                             for item in pass_candidates:
                                 answer_key = item["answer"].casefold().strip()
@@ -158,7 +182,11 @@ class SearchWorker:
                                     model_candidates.append(item)
                             if len(model_candidates) == previous_count:
                                 break
-                            emit(learned_candidates + model_candidates, False, None, "ollama")
+                            ready_dictionary = dictionary_future.result() if dictionary_future.done() else []
+                            emit(
+                                merge_candidates(learned_candidates, ready_dictionary, model_candidates),
+                                False, None, "ollama",
+                            )
                         self._ollama_failure_until = 0.0
                     except Exception as exc:
                         model_error = f"Ollama unavailable: {exc}"
@@ -170,7 +198,7 @@ class SearchWorker:
                     live_exclusions = set(self._live_exclusions.get(prompt_key, set()))
                 candidates = []
                 candidate_keys: set[str] = set()
-                for item in learned_candidates + (model_candidates or dictionary):
+                for item in merge_candidates(learned_candidates, dictionary, model_candidates):
                     answer_key = item["answer"].casefold().strip()
                     if answer_key not in live_exclusions and answer_key not in candidate_keys:
                         candidate_keys.add(answer_key)
@@ -182,6 +210,7 @@ class SearchWorker:
                 # Complete immediately after local generation.
                 if model_candidates and not exclusions:
                     self.cache.put(cache_prompt, [], candidates)
+                generation_complete.set()
                 emit(candidates, True, model_error, source)
             except Exception as exc:
                 # Keep unexpected provider/data errors visible in the UI instead of

@@ -97,7 +97,7 @@ When the monitored browser opens, KrillionSolver changes to compact view. It is 
 - `✓` records that answer as correct training feedback.
 - `✕` records that answer as wrong, removes it, and requests replacements.
 
-The answer list supports the mouse wheel. A new question clears the previous list and scrolls back to the first answer.
+The answer list supports the mouse wheel. A new question clears the previous list and scrolls back to the first answer. Game mode uses a dense 440×340 compact window while retaining the prompt, status, Refresh, Clear, Full view, Always on top, scrolling, and all answer action buttons.
 
 ## How answer generation works
 
@@ -105,8 +105,8 @@ The solver uses up to five Ollama passes:
 
 1. Previously accepted answers for the same normalized prompt are read from local history and displayed immediately.
 2. **Pass 1 prioritizes speed.** It asks for one answer with a small token limit. It does not wait for the local lexicon.
-3. Local dictionary and category lookup runs simultaneously on another worker thread.
-4. **Passes 2 through 5** request more answers, use the local hints, and exclude answers already produced.
+3. Local dictionary and category lookup runs simultaneously on another worker thread. Its matches appear as soon as lookup finishes while Ollama keeps running.
+4. **Passes 2 through 5** request more answers, use the local hints, and exclude answers already produced. In regular Krillion these passes prefer valid uncommon and specific answers. Puffer Party continues prioritizing dependable speed on every pass.
 5. A new question cancels the remaining passes for the previous question.
 
 Later Ollama passes remain sequential because simultaneous 8B generations can increase VRAM use and reduce responsiveness. The first model request and local lookup already run concurrently.
@@ -187,6 +187,8 @@ Feedback is stored outside the repository so reinstalling or updating the projec
 - `rejected_answers.jsonl` contains answers rejected with `✕`.
 
 Accepted history affects local suggestions immediately. Feedback does not change the Ollama model itself until you fine-tune and recreate that model. Krillion and Puffer Party histories are stored separately.
+
+Double-click **Edit Answer History.bat** to open the separate history utility. It can search, correct, delete, and export the SQLite history without adding controls to the gameplay popup. History edits affect instant suggestions; use **Edit Training Data.bat** for the JSONL files used by fine-tuning.
 
 Use **Edit Training Data.bat** to review or correct saved data. Keep one valid JSON object per line. Delete a whole line to remove a bad entry.
 
@@ -331,6 +333,7 @@ KrillionSolver/
 ├── Train KrillionSolver.bat
 ├── Prepare Colab Training.bat
 ├── Edit Training Data.bat
+├── Edit Answer History.bat
 ├── prompt_assistant.py
 ├── requirements.txt
 ├── app/
@@ -338,6 +341,7 @@ KrillionSolver/
 │   ├── answer_history.py
 │   ├── background_worker.py
 │   ├── browser_manager.py
+│   ├── history_window.py
 │   ├── learned_answers.py
 │   ├── ollama_provider.py
 │   ├── prompt_constraints.py

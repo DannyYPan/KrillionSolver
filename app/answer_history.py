@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import threading
+import csv
 from pathlib import Path
 
 from .prompt_detector import normalize_prompt
@@ -103,6 +104,33 @@ def record(
     return True
 
 
+def import_record(
+    prompt: str, answer: str, status: str, *, mode: str = "Krillion", source: str = "legacy-jsonl",
+) -> bool:
+    """Import an older feedback row without increasing an existing observation count."""
+    clean_prompt = " ".join(prompt.split())
+    clean_answer = " ".join(answer.split())
+    prompt_key = _prompt_key(clean_prompt)
+    if (not prompt_key or not clean_answer or len(clean_answer) > 100
+            or status not in {"accepted", "rejected"}):
+        return False
+    with _lock:
+        connection = _connect()
+        try:
+            connection.execute("""
+                INSERT OR IGNORE INTO answer_history (
+                    mode, prompt, normalized_prompt, answer, normalized_answer, status, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                mode.strip() or "Krillion", clean_prompt, prompt_key, clean_answer,
+                clean_answer.casefold(), status, source,
+            ))
+            connection.commit()
+        finally:
+            connection.close()
+    return True
+
+
 def accepted(prompt: str, *, mode: str = "Krillion", excluded: list[str] | None = None) -> list[str]:
     """Return accepted answers, prioritizing those observed most often."""
     prompt_key = _prompt_key(prompt)
@@ -143,3 +171,84 @@ def details(prompt: str, *, mode: str = "Krillion") -> list[dict[str, object]]:
     except sqlite3.Error:
         return []
     return [dict(row) for row in rows]
+
+
+def search(query: str = "", *, mode: str = "", status: str = "") -> list[dict[str, object]]:
+    """Search history rows for the desktop history manager."""
+    clauses: list[str] = []
+    params: list[str] = []
+    if mode:
+        clauses.append("mode=?")
+        params.append(mode)
+    if status in {"accepted", "rejected"}:
+        clauses.append("status=?")
+        params.append(status)
+    if query.strip():
+        clauses.append("(prompt LIKE ? OR answer LIKE ?)")
+        pattern = f"%{query.strip()}%"
+        params.extend([pattern, pattern])
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with _lock:
+        connection = _connect()
+        try:
+            rows = connection.execute(f"""
+                SELECT id, mode, prompt, answer, status, observations
+                FROM answer_history{where}
+                ORDER BY normalized_prompt, status='accepted' DESC, observations DESC, answer
+            """, params).fetchall()
+        finally:
+            connection.close()
+    return [dict(row) for row in rows]
+
+
+def update(record_id: int, *, mode: str, prompt: str, answer: str, status: str) -> bool:
+    """Edit one history row while preserving its observation count."""
+    clean_prompt = " ".join(prompt.split())
+    clean_answer = " ".join(answer.split())
+    if (not _prompt_key(clean_prompt) or not clean_answer or len(clean_answer) > 100
+            or status not in {"accepted", "rejected"}):
+        return False
+    with _lock:
+        connection = _connect()
+        try:
+            try:
+                cursor = connection.execute("""
+                    UPDATE answer_history SET
+                        mode=?, prompt=?, normalized_prompt=?, answer=?, normalized_answer=?,
+                        status=?, source='history-editor', last_seen=CURRENT_TIMESTAMP
+                    WHERE id=?
+                """, (
+                    mode.strip() or "Krillion", clean_prompt, _prompt_key(clean_prompt),
+                    clean_answer, clean_answer.casefold(), status, record_id,
+                ))
+                connection.commit()
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                return False
+        finally:
+            connection.close()
+    return cursor.rowcount == 1
+
+
+def delete(record_id: int) -> bool:
+    with _lock:
+        connection = _connect()
+        try:
+            cursor = connection.execute("DELETE FROM answer_history WHERE id=?", (record_id,))
+            connection.commit()
+        finally:
+            connection.close()
+    return cursor.rowcount == 1
+
+
+def export_csv(path: str | Path, rows: list[dict[str, object]] | None = None) -> int:
+    """Export the visible history fields to a spreadsheet-compatible CSV."""
+    exported = rows if rows is not None else search()
+    with Path(path).open("w", encoding="utf-8-sig", newline="") as output:
+        writer = csv.DictWriter(
+            output, fieldnames=["mode", "prompt", "answer", "status", "observations"],
+            extrasaction="ignore",
+        )
+        writer.writeheader()
+        writer.writerows(exported)
+    return len(exported)
