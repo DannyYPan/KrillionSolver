@@ -205,14 +205,14 @@ class KrillionSolverApp(tk.Tk):
         self.request_id += 1
         self.clear_results(reset_scroll=True)
         if self.auto_search.get():
-            self.search_worker.request(prompt, self.request_id)
+            self.search_worker.request(prompt, self.request_id, mode=self.site.get())
             self.search_status.set("Asking Ollama…")
 
     def _save_confirmed_answer(self, answer: str) -> bool:
         if not self.current_prompt:
             self.search_status.set("Wait for a prompt before saving an answer")
             return False
-        if not remember(self.current_prompt, answer):
+        if not remember(self.current_prompt, answer, mode=self.site.get(), source="feedback-button"):
             self.search_status.set("Enter an answer of 1 to 100 characters")
             return False
         clean_answer = " ".join(answer.split())
@@ -243,12 +243,14 @@ class KrillionSolverApp(tk.Tk):
         self.request_id += 1
         self.search_worker.request(
             self.current_prompt, self.request_id, force=True,
-            excluded_answers=self.rejected_answers,
+            excluded_answers=self.rejected_answers, mode=self.site.get(),
         )
         self.search_status.set("Asking Ollama again…")
 
     def _reject_answer(self, answer: str) -> None:
-        if self.current_prompt and not reject_answer(self.current_prompt, answer):
+        if self.current_prompt and not reject_answer(
+            self.current_prompt, answer, mode=self.site.get(), source="feedback-button"
+        ):
             self.search_status.set("Could not save feedback for fine-tuning")
             return
         if not any(item.casefold() == answer.casefold() for item in self.rejected_answers):
@@ -318,7 +320,10 @@ class KrillionSolverApp(tk.Tk):
         ]
         if not new_answers:
             return
-        saved_count = sum(remember(self.current_prompt, answer) for answer in new_answers)
+        saved_count = sum(
+            remember(self.current_prompt, answer, mode=self.site.get(), source="game-page")
+            for answer in new_answers
+        )
         self.said_answers.extend(new_answers)
         self.search_worker.exclude(self.current_prompt, new_answers)
         self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith("Generating"))
@@ -367,6 +372,8 @@ class KrillionSolverApp(tk.Tk):
             self.search_status.set("Answers ready")
         elif payload.get("source") == "local-fallback" and payload.get("candidates"):
             self.search_status.set("Local dictionary suggestions · Ollama unavailable")
+        elif payload.get("source") == "learned" and payload.get("candidates"):
+            self.search_status.set("Saved answers ready" + (" · Ollama unavailable" if error else ""))
         elif error:
             self.search_status.set(error)
         elif not payload.get("candidates"):

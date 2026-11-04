@@ -1,4 +1,6 @@
 import queue
+import os
+import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -169,6 +171,33 @@ class BackgroundWorkerTests(unittest.TestCase):
             payload = _complete(events)
 
         self.assertEqual(payload["candidates"][0]["answer"], "Snail")
+
+    def test_saved_answer_is_emitted_before_ollama_finishes(self):
+        events = queue.Queue()
+        worker = SearchWorker(events)
+        ollama_started = threading.Event()
+        release_ollama = threading.Event()
+
+        def slow_ollama(*_args, **_kwargs):
+            ollama_started.set()
+            release_ollama.wait(timeout=2)
+            return []
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict(os.environ, {"LOCALAPPDATA": directory}), \
+                patch("app.background_worker.OLLAMA_MODEL", "test-model"), \
+                patch("app.background_worker.suggest_with_ollama", side_effect=slow_ollama):
+            from app.learned_answers import remember
+            remember("Name a city", "Paris", source="game-page")
+            worker.request("Name a city", 1)
+            kind, payload = events.get(timeout=2)
+            self.assertEqual(kind, "search")
+            self.assertFalse(payload["complete"])
+            self.assertEqual(payload["source"], "learned")
+            self.assertEqual(payload["candidates"][0]["answer"], "Paris")
+            self.assertTrue(ollama_started.wait(timeout=1))
+            release_ollama.set()
+            _complete(events)
 
 
 if __name__ == "__main__":

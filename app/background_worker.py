@@ -9,6 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .answer_lexicon import local_candidates
+from .learned_answers import get_learned
 from .ollama_provider import OLLAMA_MODEL, suggest as suggest_with_ollama
 from .prompt_detector import normalize_prompt
 from .search_cache import SearchCache
@@ -30,9 +31,9 @@ class SearchWorker:
         self.events = events
         self.cache = cache or SearchCache()
         self._lock = threading.Lock()
-        self._inflight: dict[tuple[str, tuple[str, ...]], list[int]] = {}
+        self._inflight: dict[tuple[str, str, tuple[str, ...]], list[int]] = {}
         self._live_exclusions: dict[str, set[str]] = {}
-        self._active_key: tuple[str, tuple[str, ...]] | None = None
+        self._active_key: tuple[str, str, tuple[str, ...]] | None = None
         self._ollama_failure_until = 0.0
 
     def exclude(self, prompt: str, answers: list[str]) -> None:
@@ -51,11 +52,13 @@ class SearchWorker:
 
     def request(
         self, prompt: str, request_id: int, force: bool = False,
-        excluded_answers: list[str] | None = None,
+        excluded_answers: list[str] | None = None, mode: str = "Krillion",
     ) -> None:
         prompt_key = normalize_prompt(prompt)
+        mode_key = mode.strip() or "Krillion"
         exclusions = tuple(sorted({item.casefold().strip() for item in (excluded_answers or [])}))
-        key = (prompt_key, exclusions)
+        key = (mode_key.casefold(), prompt_key, exclusions)
+        cache_prompt = prompt if mode_key == "Krillion" else f"{mode_key}\n{prompt}"
         with self._lock:
             self._active_key = key
             if key in self._inflight:
@@ -86,16 +89,26 @@ class SearchWorker:
 
         def work() -> None:
             try:
-                cached_candidates = None if force or exclusions else self.cache.get_candidates(prompt)
-                cached_results = None if force or exclusions else self.cache.get(prompt)
+                cached_candidates = None if force or exclusions else self.cache.get_candidates(cache_prompt)
+                cached_results = None if force or exclusions else self.cache.get(cache_prompt)
                 if cached_candidates is not None and cached_results is not None:
                     emit(cached_candidates, True, None, "cached")
                     return
 
                 _core, excluded = split_prompt_exclusions(prompt)
+                learned_candidates = [
+                    {"answer": answer, "confirmed": True}
+                    for answer in get_learned(
+                        prompt, list(excluded) + list(excluded_answers or []), mode=mode_key
+                    )
+                ]
+                if learned_candidates:
+                    emit(learned_candidates, False, None, "learned")
                 # Run local lookup alongside the first speed-focused Ollama pass.
                 # Large dictionary/syllable data must not delay the first answer.
-                dictionary_future = _LEXICON_EXECUTOR.submit(local_candidates, prompt, excluded)
+                dictionary_future = _LEXICON_EXECUTOR.submit(
+                    local_candidates, prompt, excluded, 8, mode=mode_key
+                )
                 dictionary: list[dict] = []
                 hints: list[str] = []
                 model_candidates: list[dict] = []
@@ -119,7 +132,7 @@ class SearchWorker:
                             previous_count = len(model_candidates)
 
                             def publish_partial(partial: list[dict]) -> None:
-                                combined = list(model_candidates)
+                                combined = list(learned_candidates) + list(model_candidates)
                                 combined_keys = {item["answer"].casefold().strip() for item in combined}
                                 combined.extend(
                                     item for item in partial
@@ -145,7 +158,7 @@ class SearchWorker:
                                     model_candidates.append(item)
                             if len(model_candidates) == previous_count:
                                 break
-                            emit(model_candidates, False, None, "ollama")
+                            emit(learned_candidates + model_candidates, False, None, "ollama")
                         self._ollama_failure_until = 0.0
                     except Exception as exc:
                         model_error = f"Ollama unavailable: {exc}"
@@ -155,17 +168,20 @@ class SearchWorker:
                     dictionary = dictionary_future.result()
                 with self._lock:
                     live_exclusions = set(self._live_exclusions.get(prompt_key, set()))
-                candidates = [
-                    item for item in (model_candidates or dictionary)
-                    if item["answer"].casefold().strip() not in live_exclusions
-                ]
-                source = "ollama" if model_candidates else "local-fallback"
+                candidates = []
+                candidate_keys: set[str] = set()
+                for item in learned_candidates + (model_candidates or dictionary):
+                    answer_key = item["answer"].casefold().strip()
+                    if answer_key not in live_exclusions and answer_key not in candidate_keys:
+                        candidate_keys.add(answer_key)
+                        candidates.append(item)
+                source = "ollama" if model_candidates else ("learned" if learned_candidates else "local-fallback")
                 if not candidates and not model_error:
                     model_error = "Ollama did not return a readable answer."
 
                 # Complete immediately after local generation.
                 if model_candidates and not exclusions:
-                    self.cache.put(prompt, [], model_candidates)
+                    self.cache.put(cache_prompt, [], candidates)
                 emit(candidates, True, model_error, source)
             except Exception as exc:
                 # Keep unexpected provider/data errors visible in the UI instead of

@@ -15,6 +15,7 @@ The application uses no web search, cloud AI API, or paid API credits. It never 
 - Resets submitted-answer tracking for every new question and game.
 - Keeps the answer list scrollable and returns it to the top for each question.
 - Supports correct and wrong feedback for future fine-tuning.
+- Keeps a structured, mode-specific SQLite history of accepted and rejected answers.
 - Provides local fallback answers when Ollama is unavailable for a supported category.
 
 ## Requirements
@@ -102,10 +103,11 @@ The answer list supports the mouse wheel. A new question clears the previous lis
 
 The solver uses up to five Ollama passes:
 
-1. **Pass 1 prioritizes speed.** It asks for one answer with a small token limit. It does not wait for the local lexicon.
-2. Local dictionary and category lookup runs simultaneously on another worker thread.
-3. **Passes 2 through 5** request more answers, use the local hints, and exclude answers already produced.
-4. A new question cancels the remaining passes for the previous question.
+1. Previously accepted answers for the same normalized prompt are read from local history and displayed immediately.
+2. **Pass 1 prioritizes speed.** It asks for one answer with a small token limit. It does not wait for the local lexicon.
+3. Local dictionary and category lookup runs simultaneously on another worker thread.
+4. **Passes 2 through 5** request more answers, use the local hints, and exclude answers already produced.
+5. A new question cancels the remaining passes for the previous question.
 
 Later Ollama passes remain sequential because simultaneous 8B generations can increase VRAM use and reduce responsiveness. The first model request and local lookup already run concurrently.
 
@@ -175,14 +177,16 @@ The batch launcher selects `krillionsolver:8b` or `llama3.1:latest` itself to gu
 Feedback is stored outside the repository so reinstalling or updating the project does not erase it:
 
 ```text
+%LOCALAPPDATA%\KrillionSolver\answer_history.sqlite3
 %LOCALAPPDATA%\KrillionSolver\training_examples.jsonl
 %LOCALAPPDATA%\KrillionSolver\rejected_answers.jsonl
 ```
 
+- `answer_history.sqlite3` stores normalized prompts, game mode, current accepted/rejected status, source, observation count, and timestamps. Duplicate observations update one record instead of creating duplicate rows.
 - `training_examples.jsonl` contains prompt-and-answer pairs confirmed with `✓` or accepted on the monitored game page.
 - `rejected_answers.jsonl` contains answers rejected with `✕`.
 
-Feedback does not modify the running model immediately. It becomes training data the next time you fine-tune and recreate the Ollama model.
+Accepted history affects local suggestions immediately. Feedback does not change the Ollama model itself until you fine-tune and recreate that model. Krillion and Puffer Party histories are stored separately.
 
 Use **Edit Training Data.bat** to review or correct saved data. Keep one valid JSON object per line. Delete a whole line to remove a bad entry.
 
@@ -331,6 +335,7 @@ KrillionSolver/
 ├── requirements.txt
 ├── app/
 │   ├── answer_lexicon.py
+│   ├── answer_history.py
 │   ├── background_worker.py
 │   ├── browser_manager.py
 │   ├── learned_answers.py

@@ -7,6 +7,7 @@ import os
 import threading
 from pathlib import Path
 
+from .answer_history import accepted as accepted_history, record
 from .prompt_detector import normalize_prompt
 
 _lock = threading.Lock()
@@ -40,16 +41,21 @@ def _rows() -> list[dict[str, str]]:
     return rows
 
 
-def get_learned(prompt: str, excluded: list[str] | None = None) -> list[str]:
-    """Compatibility reader for training examples; the live solver does not call this."""
+def get_learned(
+    prompt: str, excluded: list[str] | None = None, mode: str = "Krillion",
+) -> list[str]:
+    """Read accepted structured history plus legacy JSONL training examples."""
     key = normalize_prompt(prompt)
     excluded_keys = {value.casefold().strip() for value in (excluded or [])}
     with _lock:
-        answers = [row["answer"] for row in _rows() if normalize_prompt(row["prompt"]) == key]
+        answers = accepted_history(prompt, mode=mode, excluded=excluded)
+        answers.extend(row["answer"] for row in _rows() if normalize_prompt(row["prompt"]) == key)
     return list(dict.fromkeys(answer for answer in answers if answer.casefold().strip() not in excluded_keys))
 
 
-def remember(prompt: str, answer: str) -> bool:
+def remember(
+    prompt: str, answer: str, *, mode: str = "Krillion", source: str = "feedback",
+) -> bool:
     """Append a manually confirmed answer to the fine-tuning corpus."""
     clean_prompt = " ".join(prompt.split())
     clean_answer = " ".join(answer.split())
@@ -58,6 +64,8 @@ def remember(prompt: str, answer: str) -> bool:
         return False
     key = (normalize_prompt(clean_prompt), clean_answer.casefold())
     with _lock:
+        if not record(clean_prompt, clean_answer, "accepted", mode=mode, source=source):
+            return False
         if any((normalize_prompt(row["prompt"]), row["answer"].casefold()) == key for row in _rows()):
             return True
         path = _training_path()
@@ -69,7 +77,9 @@ def remember(prompt: str, answer: str) -> bool:
     return True
 
 
-def reject_answer(prompt: str, answer: str) -> bool:
+def reject_answer(
+    prompt: str, answer: str, *, mode: str = "Krillion", source: str = "feedback",
+) -> bool:
     """Persist a user-rejected model answer for preference fine-tuning."""
     clean_prompt = " ".join(prompt.split())
     clean_answer = " ".join(answer.split())
@@ -79,6 +89,8 @@ def reject_answer(prompt: str, answer: str) -> bool:
     key = (normalize_prompt(clean_prompt), clean_answer.casefold())
     path = _rejected_path()
     with _lock:
+        if not record(clean_prompt, clean_answer, "rejected", mode=mode, source=source):
+            return False
         try:
             with path.open(encoding="utf-8") as data_file:
                 for line in data_file:
