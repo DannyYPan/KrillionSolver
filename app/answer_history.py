@@ -12,6 +12,7 @@ from pathlib import Path
 from .prompt_detector import normalize_prompt
 
 _lock = threading.RLock()
+_initialized_paths: set[Path] = set()
 
 
 def _prompt_key(prompt: str) -> str:
@@ -28,32 +29,40 @@ def _connect() -> sqlite3.Connection:
     path = history_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=5)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS answer_history (
-            id INTEGER PRIMARY KEY,
-            mode TEXT NOT NULL,
-            prompt TEXT NOT NULL,
-            normalized_prompt TEXT NOT NULL,
-            answer TEXT NOT NULL,
-            normalized_answer TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')),
-            source TEXT NOT NULL,
-            level TEXT,
-            reporter TEXT,
-            note TEXT,
-            observations INTEGER NOT NULL DEFAULT 1,
-            first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(mode, normalized_prompt, normalized_answer)
-        )
-    """)
-    connection.execute("""
-        CREATE INDEX IF NOT EXISTS answer_history_lookup
-        ON answer_history(mode, normalized_prompt, status, observations DESC)
-    """)
-    return connection
+    try:
+        connection.row_factory = sqlite3.Row
+        if path in _initialized_paths:
+            return connection
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS answer_history (
+                id INTEGER PRIMARY KEY,
+                mode TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                normalized_prompt TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                normalized_answer TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')),
+                source TEXT NOT NULL,
+                level TEXT,
+                reporter TEXT,
+                note TEXT,
+                observations INTEGER NOT NULL DEFAULT 1,
+                first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(mode, normalized_prompt, normalized_answer)
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS answer_history_lookup
+            ON answer_history(mode, normalized_prompt, status, observations DESC)
+        """)
+        connection.commit()
+        _initialized_paths.add(path)
+        return connection
+    except Exception:
+        connection.close()
+        raise
 
 
 def record(
@@ -131,6 +140,35 @@ def import_record(
     return True
 
 
+def import_records(rows: list[tuple[str, str, str]], *, mode: str = "Krillion") -> int:
+    """Import legacy feedback in one transaction to avoid startup I/O spikes."""
+    prepared = []
+    for prompt, answer, status in rows:
+        clean_prompt = " ".join(prompt.split())
+        clean_answer = " ".join(answer.split())
+        if _prompt_key(clean_prompt) and clean_answer and len(clean_answer) <= 100 and status in {"accepted", "rejected"}:
+            prepared.append((
+                mode, clean_prompt, _prompt_key(clean_prompt), clean_answer,
+                clean_answer.casefold(), status, "legacy-jsonl",
+            ))
+    if not prepared:
+        return 0
+    with _lock:
+        connection = _connect()
+        try:
+            before = connection.total_changes
+            connection.executemany("""
+                INSERT OR IGNORE INTO answer_history (
+                    mode, prompt, normalized_prompt, answer, normalized_answer, status, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, prepared)
+            connection.commit()
+            changed = connection.total_changes - before
+        finally:
+            connection.close()
+    return changed
+
+
 def accepted(prompt: str, *, mode: str = "Krillion", excluded: list[str] | None = None) -> list[str]:
     """Return accepted answers, prioritizing those observed most often."""
     prompt_key = _prompt_key(prompt)
@@ -151,6 +189,27 @@ def accepted(prompt: str, *, mode: str = "Krillion", excluded: list[str] | None 
     except sqlite3.Error:
         return []
     return [row["answer"] for row in rows if row["answer"].casefold().strip() not in blocked]
+
+
+def rejected(prompt: str, *, mode: str = "Krillion") -> list[str]:
+    """Return answers the user has marked wrong for this prompt."""
+    prompt_key = _prompt_key(prompt)
+    if not prompt_key:
+        return []
+    try:
+        with _lock:
+            connection = _connect()
+            try:
+                rows = connection.execute("""
+                SELECT answer FROM answer_history
+                WHERE mode=? AND normalized_prompt=? AND status='rejected'
+                ORDER BY observations DESC, last_seen DESC, id ASC
+                """, (mode.strip() or "Krillion", prompt_key)).fetchall()
+            finally:
+                connection.close()
+    except sqlite3.Error:
+        return []
+    return [row["answer"] for row in rows]
 
 
 def details(prompt: str, *, mode: str = "Krillion") -> list[dict[str, object]]:

@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from .answer_history import accepted as accepted_history, import_record, record
+from .answer_history import accepted as accepted_history, import_records, record, rejected as rejected_history
 from .prompt_detector import normalize_prompt
 
 _lock = threading.Lock()
@@ -70,10 +70,14 @@ def _ensure_history_migrated() -> None:
         return
     _migration_attempted.add(marker)
     try:
-        for row in _rows():
-            import_record(row["prompt"], row["answer"], "accepted")
-        for row in _read_feedback_rows(_rejected_path()):
-            import_record(row["prompt"], row["answer"], "rejected")
+        rows = [
+            (row["prompt"], row["answer"], "accepted") for row in _rows()
+        ]
+        rows.extend(
+            (row["prompt"], row["answer"], "rejected")
+            for row in _read_feedback_rows(_rejected_path())
+        )
+        import_records(rows)
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.touch()
     except (OSError, sqlite3.Error):
@@ -97,6 +101,13 @@ def get_learned(
         _ensure_history_migrated()
         answers = accepted_history(prompt, mode=mode, excluded=excluded)
     return list(dict.fromkeys(answer for answer in answers if answer.casefold().strip() not in excluded_keys))
+
+
+def get_rejected(prompt: str, mode: str = "Krillion") -> list[str]:
+    """Read answers previously marked wrong so generation cannot repeat them."""
+    with _lock:
+        _ensure_history_migrated()
+        return rejected_history(prompt, mode=mode)
 
 
 def remember(

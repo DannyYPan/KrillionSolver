@@ -40,12 +40,29 @@ _COUNTRY = re.compile(
 )
 _REGION = re.compile(r"\b(?:european|asian|african|north american|south american|oceanian|in europe|in asia|in africa|in north america|in south america|in oceania)\b", re.I)
 _FLAG_COLORS = {
-    "red": "Canada|China|France|Germany|India|Indonesia|Italy|Japan|Mexico|Netherlands|Norway|Poland|Portugal|Russia|Spain|Sweden|Switzerland|Turkey|United Kingdom|United States|Vietnam",
-    "blue": "Argentina|Australia|Brazil|France|Greece|India|Israel|Japan|Netherlands|New Zealand|Russia|Sweden|United Kingdom|United States",
-    "white": "Canada|Finland|France|Greece|India|Indonesia|Israel|Italy|Japan|Mexico|Netherlands|Poland|Russia|Sweden|Switzerland|United Kingdom|United States",
+    "red": "Canada|China|France|Germany|India|Indonesia|Italy|Japan|Mexico|Netherlands|Norway|Poland|Portugal|Russia|Spain|Switzerland|Turkey|United Kingdom|United States|Vietnam",
+    "blue": "Argentina|Australia|Brazil|France|Greece|India|Israel|Netherlands|New Zealand|Russia|Sweden|United Kingdom|United States",
+    "white": "Canada|Finland|France|Greece|India|Indonesia|Israel|Italy|Japan|Mexico|Netherlands|Poland|Russia|Switzerland|United Kingdom|United States",
     "green": "Brazil|India|Ireland|Italy|Mexico|Nigeria|Pakistan|Saudi Arabia|South Africa|Portugal",
     "yellow": "Brazil|China|Germany|India|Spain|Sweden|Ukraine|Vietnam",
     "black": "Belgium|Germany|Jamaica|South Africa",
+}
+_EXACT_FLAG_COLORS = {
+    "Argentina": {"blue", "white", "yellow"}, "Australia": {"red", "white", "blue"},
+    "Belgium": {"black", "yellow", "red"}, "Brazil": {"green", "yellow", "blue", "white"},
+    "Canada": {"red", "white"}, "China": {"red", "yellow"},
+    "France": {"red", "white", "blue"}, "Germany": {"black", "red", "yellow"},
+    "Greece": {"blue", "white"}, "India": {"orange", "white", "green", "blue"},
+    "Indonesia": {"red", "white"}, "Ireland": {"green", "white", "orange"},
+    "Israel": {"blue", "white"}, "Italy": {"green", "white", "red"},
+    "Jamaica": {"black", "green", "yellow"}, "Japan": {"red", "white"},
+    "Netherlands": {"red", "white", "blue"}, "New Zealand": {"red", "white", "blue"},
+    "Nigeria": {"green", "white"}, "Norway": {"red", "white", "blue"},
+    "Poland": {"red", "white"}, "Russia": {"red", "white", "blue"},
+    "Saudi Arabia": {"green", "white"}, "Sweden": {"blue", "yellow"},
+    "Switzerland": {"red", "white"}, "Turkey": {"red", "white"},
+    "Ukraine": {"blue", "yellow"}, "United Kingdom": {"red", "white", "blue"},
+    "United States": {"red", "white", "blue"}, "Vietnam": {"red", "yellow"},
 }
 _LANDLOCKED = set("Afghanistan|Armenia|Austria|Azerbaijan|Belarus|Bhutan|Bolivia|Botswana|Burkina Faso|Burundi|Central African Republic|Chad|Czechia|Eswatini|Ethiopia|Hungary|Kazakhstan|Kyrgyzstan|Laos|Lesotho|Liechtenstein|Luxembourg|Malawi|Mali|Moldova|Mongolia|Nepal|Niger|North Macedonia|Paraguay|Rwanda|San Marino|Serbia|Slovakia|South Sudan|Switzerland|Tajikistan|Turkmenistan|Uganda|Uzbekistan|Vatican City|Zambia|Zimbabwe".split("|"))
 _SMALL_POPULATION = set("Andorra|Antigua and Barbuda|Dominica|Kiribati|Liechtenstein|Marshall Islands|Monaco|Nauru|Palau|Saint Kitts and Nevis|San Marino|Seychelles|Tuvalu|Vatican City".split("|"))
@@ -128,6 +145,11 @@ _ANIMAL_TRAITS = {
     "wings": {"Eagle", "Owl", "Bat", "Penguin", "Butterfly", "Bee"},
     "scales": {"Snake", "Crocodile", "Shark"},
 }
+_SEA_ANIMALS = {
+    "Dolphin", "Whale", "Octopus", "Turtle", "Crab", "Lobster", "Clam",
+    "Oyster", "Mussel", "Nautilus", "Chiton", "Horseshoe Crab",
+}
+_FISH_OR_BIRDS = {"Shark", "Penguin", "Eagle", "Owl"}
 _FALLBACK_WORDS = set("""prototype stereotype archetype genotype phenotype subtype bloodtype prototype textile stereotype sea food seafood dogfood catfood fastfood junkfood soulfood brainfood foodtruck
 stop watch stopwatch stoplight stopgap stopover stopcock stopword non nonstop bus busstop laptop laptopcase flower sunflower football snowball airport airplane raincoat overcoat breakfast bookshelfs bookshelf toothbrush toothpaste firehouse lighthouse lighthouse keeper
 """.split()) | set(_COMMON_ENGLISH_WORDS)
@@ -171,6 +193,22 @@ def _dictionary_form(value: str) -> str:
     return re.sub(r"[^a-z]", "", value.casefold())
 
 
+def _requested_subject(prompt: str) -> str:
+    """Extract the noun phrase the player was asked to name."""
+    match = re.search(
+        r"\b(?:name|give(?:\s+me)?|list|think\s+of)\b\s+"
+        r"(?:(?:any|one\s+of|one|some|the|an?)\s+)*(?P<subject>.+)",
+        prompt, re.I,
+    )
+    if not match:
+        return prompt
+    return re.split(
+        r"\s+(?:that|which|whose|who|with|without|from|in|on|used|having|"
+        r"ending|starting|containing|including)\b|\s*\(",
+        match.group("subject"), maxsplit=1, flags=re.I,
+    )[0].strip(" .,:;?!\"'")
+
+
 def prompt_kind(prompt: str) -> tuple[str, str] | None:
     if _TV_CHARACTER_PROMPT.search(prompt):
         for show_key, alias in _SHOW_ALIASES.items():
@@ -178,18 +216,33 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
                 return "tv_character", show_key
     if _SITCOM_PROMPT.search(prompt) and _TV_SHOW_PROMPT.search(prompt):
         return "sitcom", ""
+    subject = _requested_subject(prompt)
     if not _CONTAINS.search(prompt) and re.search(r"\b(?:name|give|list|think of|what|which)\b", prompt, re.I):
         for trivia_key, alias in _TRIVIA_ALIASES.items():
-            if alias.search(prompt):
+            if alias.search(subject):
                 return "trivia", trivia_key
     syllable = _SYLLABLE.search(prompt)
     if syllable and re.search(r"\b(?:word|name|something|thing|answer)\b", prompt, re.I):
         raw_count = syllable.group("count").casefold()
         return "syllables", str(_NUMBER_WORDS.get(raw_count, int(raw_count) if raw_count.isdigit() else 0))
     match = _ENDING.search(prompt)
+    if not match:
+        # Curly quotes copied through a mismatched encoding can become several
+        # punctuation characters. Ignore that punctuation before the suffix.
+        match = re.search(
+            r"\b(?:ends?\s+(?:in|with)|ending\s+(?:in|with))\s+"
+            r"(?:(?:the\s+)?(?:letter\s+)?)?[^a-z0-9]{0,12}-?([a-z]{1,20})\b",
+            prompt, re.I,
+        )
     if match:
         return "ending", match.group(1).casefold()
     match = _STARTING.search(prompt)
+    if not match:
+        match = re.search(
+            r"\b(?:start(?:s|ing)?\s+(?:with|in)|beginning\s+with)\s+"
+            r"(?:(?:the\s+)?(?:letter\s+)?)?[^a-z0-9]{0,12}-?([a-z]{1,20})\b",
+            prompt, re.I,
+        )
     if match:
         return "starting", match.group(1).casefold()
     match = _COMPOUND.search(prompt)
@@ -219,7 +272,11 @@ def _qualified_countries(prompt: str, category: str, region: str) -> list[str]:
             eligible = [name for name in eligible if name not in _LANDLOCKED]
     colors = [name for name in _FLAG_COLORS if re.search(rf"\b{name}\b", lowered)]
     if colors and re.search(r"\bflag|banner\b", lowered):
-        eligible = [name for name in eligible if all(name in _FLAG_COLORS[color].split("|") for color in colors)]
+        if re.search(r"\b(?:no|without)\s+(?:any\s+)?other\s+colou?rs?\b", lowered):
+            requested = set(colors)
+            eligible = [name for name in eligible if _EXACT_FLAG_COLORS.get(name) == requested]
+        else:
+            eligible = [name for name in eligible if all(name in _FLAG_COLORS[color].split("|") for color in colors)]
     if re.search(r"\b(?:over|more than|greater than|above|at least)\s+100[,.]?000\b|\bpopulation.{0,30}100[,.]?000\b", lowered):
         eligible = [name for name in eligible if name not in _SMALL_POPULATION]
     region_name = region
@@ -301,6 +358,10 @@ def _qualified_trivia(prompt: str, category: str) -> list[str]:
     answers = list(_TRIVIA_LISTS.get(category, ()))
     if category == "animal":
         lowered = prompt.casefold()
+        if re.search(r"\b(?:sea|marine|ocean)\b", lowered):
+            answers = [answer for answer in answers if answer in _SEA_ANIMALS]
+        if re.search(r"\b(?:isn['’]?t|is not|not)\b.{0,25}\b(?:fish|bird)\b", lowered):
+            answers = [answer for answer in answers if answer not in _FISH_OR_BIRDS]
         for trait, matching in _ANIMAL_TRAITS.items():
             if re.search(rf"\b{re.escape(trait)}s?\b", lowered):
                 answers = [answer for answer in answers if answer in matching]

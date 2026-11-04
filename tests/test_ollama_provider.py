@@ -19,6 +19,28 @@ class OllamaProviderTests(unittest.TestCase):
         )
         self.assertEqual([item["answer"] for item in results], ["archetype"])
 
+    def test_fast_pass_rejects_fragments_and_page_title_text(self):
+        prompt = "Name an animal with a shell"
+        self.assertEqual(parse_suggestions("SAFE: ab", prompt, check_local=False), [])
+        self.assertEqual(parse_suggestions("SAFE: Top listeners this month", prompt, check_local=False), [])
+        self.assertEqual(parse_suggestions("SAFE: What", prompt, check_local=False), [])
+        self.assertEqual(
+            [item["answer"] for item in parse_suggestions("SAFE: Turtle", prompt, check_local=False)],
+            ["Turtle"],
+        )
+        self.assertEqual(
+            parse_suggestions(
+                "SAFE: goblin", "Name an English word ending in “-ling”", check_local=False,
+            ),
+            [],
+        )
+
+    def test_checked_later_pass_keeps_plausible_unknown_and_short_titles(self):
+        shell = parse_suggestions("SAFE: Scaphopod", "Name an animal with a shell", check_local=True)
+        movie = parse_suggestions("SAFE: Up", "Name an animated movie", check_local=True)
+        self.assertEqual([item["answer"] for item in shell], ["Scaphopod"])
+        self.assertEqual([item["answer"] for item in movie], ["Up"])
+
     def test_lexicon_puts_an_unknown_matching_word_after_a_confirmed_word(self):
         results = parse_suggestions(
             "SAFE: nonsensextype\nMORE OPTIONS: archetype",

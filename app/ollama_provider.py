@@ -9,7 +9,7 @@ from typing import Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from .answer_lexicon import candidate_check
+from .answer_lexicon import candidate_check, prompt_kind
 from .prompt_constraints import split_prompt_exclusions
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
@@ -18,9 +18,54 @@ OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("KRILLION_OLLAMA_TIMEOUT_SECONDS",
 OLLAMA_KEEP_ALIVE = os.environ.get("KRILLION_OLLAMA_KEEP_ALIVE", "10m").strip()
 
 SYSTEM_PROMPT = """You help with fast open-answer trivia. Return concise, directly usable English answers.
+First identify the subject immediately after words such as Name, Give, or List. Answer that subject. Words later in qualifiers, exclusions, purposes, or examples do not change the requested subject.
 All answers must be complete English words or names normally written in English, never abbreviations, initials, or partial word fragments. Obey every stated condition and exclusion. Treat supplied dictionary/country examples as hints, not as proof they fit. Give one safe, category-matching candidate first, then alternatives only when confident. Usually use one word or a short proper name per answer. Do not explain or claim game acceptance or rarity is verified. If uncertain, say UNCERTAIN.
 Return a short list, starting immediately with SAFE: <one candidate>. Put MORE OPTIONS on a new
 line and list up to ten distinct alternatives separated by commas. Do not repeat an answer."""
+
+_BAD_EXACT_ANSWERS = {
+    "answer", "answers", "candidate", "example", "examples", "none", "unknown",
+    "what", "which", "who", "where", "why", "name", "safe", "more options",
+}
+_BAD_RESULT_TEXT = re.compile(
+    r"(?:^|\b)(?:top\s+(?:listeners|results|answers)|popular\s+(?:results|answers)|"
+    r"search\s+results?|official\s+(?:site|website)|home\s*page|listeners?\s+this\s+month|"
+    r"click\s+here|read\s+more)(?:\b|$)|https?://|www\.|\.com\b|\.org\b|\.net\b",
+    re.I,
+)
+
+
+def _looks_like_answer(answer: str, prompt: str, *, fast: bool) -> bool:
+    """Remove headings, fragments, and page-title-like model output cheaply."""
+    clean = " ".join(answer.split()).strip(" \"'`.,;:!?()[]{}")
+    key = re.sub(r"[^\w\s-]", " ", clean.casefold()).strip()
+    letters = re.sub(r"[^a-z]", "", key)
+    if not clean or not letters or key in _BAD_EXACT_ANSWERS or _BAD_RESULT_TEXT.search(clean):
+        return False
+    if len(clean) > 100 or len(clean.split()) > 5 or "?" in answer or ":" in answer:
+        return False
+    # The speed pass previously leaked fragments such as "ab" and "ad".
+    # Later checked passes may still return real short titles such as "Up".
+    if fast and len(letters) < 3 and not re.search(r"\b(?:letter|symbol|chemical element)\b", prompt, re.I):
+        return False
+    return True
+
+
+def _breaks_fast_text_rule(answer: str, kind: tuple[str, str] | None) -> bool:
+    """Check spelling constraints without loading the full pronunciation dictionary."""
+    if not kind:
+        return False
+    category, value = kind
+    word = re.sub(r"[^a-z]", "", answer.casefold())
+    if category == "ending":
+        return not word.endswith(value) or len(word) <= len(value)
+    if category == "starting":
+        return not word.startswith(value) or len(word) <= len(value)
+    if category == "contains":
+        return value not in word or word == value
+    if category == "compound":
+        return value not in word or word == value
+    return False
 
 
 def _parts(text: str) -> list[str]:
@@ -65,12 +110,22 @@ def parse_suggestions(
         ordered = plain[:5]
     seen: set[str] = set()
     ranked_results: list[tuple[int, int, dict[str, object]]] = []
+    kind = prompt_kind(core)
+    closed_category = bool(kind and kind[0] in {
+        "trivia", "tv_character", "sitcom", "country", "country_region",
+    })
     for answer in ordered:
         key = re.sub(r"\W+", " ", answer.casefold()).strip()
         if not key or key in seen or key in excluded_keys:
             continue
-        check = candidate_check(answer, core) if check_local else "uncertain"
+        if not _looks_like_answer(answer, core, fast=not check_local):
+            continue
+        if not check_local and _breaks_fast_text_rule(answer, kind):
+            continue
+        check = candidate_check(answer, core) if (check_local or closed_category) else "uncertain"
         if check == "reject":
+            continue
+        if not check_local and closed_category and check != "match":
             continue
         seen.add(key)
         # Confirmed local matches keep the model's order at the top. Candidates
@@ -100,7 +155,8 @@ def suggest(
             {"role": "system", "content": (
                 SYSTEM_PROMPT
                 if not fast
-                else "Give one immediate, directly usable answer. Obey every condition and exclusion. "
+                else "Identify the subject immediately after Name, Give, or List and answer that subject. "
+                     "Later qualifiers and examples do not change the subject. Obey every condition and exclusion. "
                      "Return only: SAFE: <answer>. Do not explain."
             )},
             {"role": "user", "content": (
@@ -112,7 +168,8 @@ def suggest(
                     if fast else
                     (
                         "Return only valid candidates that satisfy the prompt. Prefer uncommon, specific, "
-                        "less obvious answers after ensuring they are real and category-correct."
+                        "less obvious answers after ensuring they are real, well-established, and category-correct. "
+                        "Never invent a name merely to make it rare."
                         if prefer_rare else
                         "Return only candidates that satisfy the prompt. Prioritize dependable answers over rarity."
                     )
@@ -120,8 +177,8 @@ def suggest(
             )},
         ],
         "options": {
-            "temperature": 0.1 if fast else (0.3 if prefer_rare else 0.2),
-            "num_predict": 24 if fast else 160,
+            "temperature": 0.08 if fast else (0.2 if prefer_rare else 0.15),
+            "num_predict": 20 if fast else 96,
         },
     }).encode("utf-8")
     request = Request(f"{OLLAMA_HOST}/api/chat", data=body, headers={"Content-Type": "application/json"}, method="POST")

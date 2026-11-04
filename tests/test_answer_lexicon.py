@@ -122,6 +122,25 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertNotIn("Dog", shell_answers)
         self.assertEqual(candidate_check("Unknown Shelled Animal", "Name an animal with a shell"), "uncertain")
 
+    def test_qualifiers_do_not_replace_the_requested_subject(self):
+        sea_prompt = "Name a sea animal that isn't a fish or a bird"
+        sea_answers = [item["answer"] for item in local_candidates(sea_prompt, limit=30)]
+        self.assertIn("Octopus", sea_answers)
+        self.assertNotIn("Kangaroo", sea_answers)
+        self.assertNotIn("Shark", sea_answers)
+        item_prompt = "Name an item used for eating or serving food (like a plate or spoon)"
+        self.assertIsNone(prompt_kind(item_prompt))
+        emotion_prompt = "Name one of the emotions from Inside Out or Inside Out 2"
+        self.assertIsNone(prompt_kind(emotion_prompt))
+        self.assertEqual(prompt_kind("Name a food"), ("trivia", "food"))
+
+    def test_exact_flag_colors_reject_flags_with_missing_or_extra_colors(self):
+        prompt = "Name a country whose flag uses all three of red, white, and blue, and no other colors"
+        answers = [item["answer"] for item in local_candidates(prompt, limit=40)]
+        self.assertIn("France", answers)
+        self.assertNotIn("Japan", answers)
+        self.assertEqual(candidate_check("Japan", prompt), "uncertain")
+
     def test_interjection_and_filler_word_lists_are_separate(self):
         interjections = [item["answer"] for item in local_candidates("Name an interjection", limit=30)]
         fillers = [item["answer"] for item in local_candidates("Name a filler word", limit=30)]

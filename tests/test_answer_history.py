@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from app.answer_history import accepted, delete, details, export_csv, record, search, update
+from app.answer_history import accepted, delete, details, export_csv, record, rejected, search, update
 
 
 class AnswerHistoryTests(unittest.TestCase):
@@ -22,8 +22,10 @@ class AnswerHistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"LOCALAPPDATA": directory}):
             record("Name a city", "Paris", "rejected", source="feedback-button")
             self.assertEqual(accepted("Name a city"), [])
+            self.assertEqual(rejected("Name a city"), ["Paris"])
             record("Name a city", "Paris", "accepted", source="game-page")
             self.assertEqual(accepted("Name a city"), ["Paris"])
+            self.assertEqual(rejected("Name a city"), [])
             self.assertEqual(details("Name a city")[0]["status"], "accepted")
 
     def test_modes_are_separate_and_exclusions_apply(self):

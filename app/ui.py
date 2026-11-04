@@ -37,6 +37,7 @@ class KrillionSolverApp(tk.Tk):
         self.current_candidates: list[dict] = []
         self.rejected_answers: list[str] = []
         self.said_answers: list[str] = []
+        self._rendered_signature: tuple | None = None
         self._configure_styles()
         self._build()
         self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
@@ -255,24 +256,18 @@ class KrillionSolverApp(tk.Tk):
             self.search_status.set("Enter an answer of 1 to 100 characters")
             return False
         clean_answer = " ".join(answer.split())
-        found = False
-        updated_candidates = []
-        for item in self.current_candidates:
-            if item.get("answer", "").casefold() == clean_answer.casefold():
-                item = {
-                    **item,
-                    "confirmed": True,
-                }
-                found = True
-            updated_candidates.append(item)
-        self.current_candidates = updated_candidates
-        if not found:
-            self.current_candidates.insert(0, {
-                "answer": clean_answer,
-                "confirmed": True,
-            })
-        self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith(("Asking", "Generating")))
-        self.search_status.set(f"✓ {clean_answer} added to training data")
+        if not any(item.casefold() == clean_answer.casefold() for item in self.said_answers):
+            self.said_answers.append(clean_answer)
+        self.search_worker.exclude(self.current_prompt, [clean_answer])
+        self.current_candidates = [
+            item for item in self.current_candidates
+            if item.get("answer", "").casefold() != clean_answer.casefold()
+        ]
+        self._render_candidates(
+            self.current_candidates,
+            searching=self.search_status.get().startswith(("Asking", "Generating")),
+        )
+        self.search_status.set(f"✓ {clean_answer} saved and removed")
         return True
 
     def refresh_search(self) -> None:
@@ -298,16 +293,21 @@ class KrillionSolverApp(tk.Tk):
             item for item in self.current_candidates
             if item.get("answer", "").casefold() != answer.casefold()
         ]
-        self._render_candidates(self.current_candidates, searching=True)
         if self.current_prompt:
-            self.refresh_search()
-            self.search_status.set(f"Marked {answer} wrong · saved for the next training run")
+            self.search_worker.exclude(self.current_prompt, [answer])
+        self._render_candidates(
+            self.current_candidates,
+            searching=self.search_status.get().startswith(("Asking", "Generating")),
+        )
+        if self.current_prompt:
+            self.search_status.set(f"✕ {answer} saved as wrong and removed")
 
     def _scroll_results_to_top(self) -> None:
         """Start each newly detected question at its first answer."""
         self.ideas_canvas.yview_moveto(0)
 
     def clear_results(self, reset_scroll: bool = False) -> None:
+        self._rendered_signature = None
         for child in self.ideas_inner.winfo_children():
             child.destroy()
         if reset_scroll:
@@ -319,6 +319,13 @@ class KrillionSolverApp(tk.Tk):
         hidden = {answer.casefold() for answer in self.rejected_answers + self.said_answers}
         candidates = [item for item in candidates if item.get("answer", "").casefold() not in hidden]
         self.current_candidates = list(candidates)
+        signature = tuple(
+            (str(item.get("answer", "")).casefold(), bool(item.get("confirmed")))
+            for item in candidates
+        ) or (("__empty__", searching),)
+        if signature == self._rendered_signature:
+            return
+        self._rendered_signature = signature
         for child in self.ideas_inner.winfo_children():
             child.destroy()
         if not candidates:
@@ -328,22 +335,25 @@ class KrillionSolverApp(tk.Tk):
         for number, candidate in enumerate(candidates, start=1):
             card = ttk.Frame(self.ideas_inner, padding=(6, 3), style="Answer.TFrame")
             card.pack(fill="x", anchor="w", padx=1, pady=1)
-            name = ttk.Label(card, text=f"{number}. {candidate['answer']}", style="Answer.TLabel")
-            name.pack(side="left", anchor="w")
+            buttons = ttk.Frame(card, style="Card.TFrame")
+            buttons.pack(side="right", anchor="e")
             ttk.Button(
-                card, text="⧉", width=3, style="Icon.TButton",
+                buttons, text="⧉", width=3, style="Icon.TButton",
                 command=lambda answer=candidate["answer"]: self._copy_answer(answer),
             ).pack(side="right")
             ttk.Button(
-                card, text="✓", width=3, style="Icon.TButton",
+                buttons, text="✓", width=3, style="Icon.TButton",
                 command=lambda answer=candidate["answer"]: self._save_confirmed_answer(answer),
             ).pack(side="right", padx=(0, 4))
             ttk.Button(
-                card, text="✕", width=3, style="Icon.TButton",
+                buttons, text="✕", width=3, style="Icon.TButton",
                 command=lambda answer=candidate["answer"]: self._reject_answer(answer),
             ).pack(side="right", padx=(0, 4))
-            if candidate.get("confirmed"):
-                ttk.Label(card, text="saved", style="Saved.TLabel").pack(side="left", padx=(5, 0))
+            saved_mark = "✓ " if candidate.get("confirmed") else ""
+            name = ttk.Label(
+                card, text=f"{number}. {saved_mark}{candidate['answer']}", style="Answer.TLabel",
+            )
+            name.pack(side="left", anchor="w", fill="x", expand=True)
 
     def _remove_said_answers(self, page_text: str, detected_prompt: str | None) -> None:
         if not self.current_prompt or normalize_prompt(detected_prompt or "") != normalize_prompt(self.current_prompt):
@@ -419,6 +429,7 @@ class KrillionSolverApp(tk.Tk):
             self.search_status.set("No answer returned · check Ollama and its model")
 
     def _poll_events(self) -> None:
+        pending_search: dict | None = None
         try:
             while True:
                 kind, value = self.events.get_nowait()
@@ -443,9 +454,22 @@ class KrillionSolverApp(tk.Tk):
                         self.diag_text.configure(state="disabled")
                 elif kind == "search":
                     if result_is_current(value["request_id"], self.request_id, value["prompt"], self.current_prompt):
-                        self._render_results(value)
+                        if pending_search is None:
+                            pending_search = value
+                        else:
+                            merged = []
+                            seen = set()
+                            for item in pending_search.get("candidates", []) + value.get("candidates", []):
+                                key = str(item.get("answer", "")).casefold().strip()
+                                if key and key not in seen:
+                                    seen.add(key)
+                                    merged.append(item)
+                            preferred = value if value.get("complete") or not pending_search.get("complete") else pending_search
+                            pending_search = {**preferred, "candidates": merged}
         except queue.Empty:
             pass
+        if pending_search is not None:
+            self._render_results(pending_search)
         if self.winfo_exists():
             self.after(100, self._poll_events)
 

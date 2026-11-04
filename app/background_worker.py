@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .answer_lexicon import local_candidates
-from .learned_answers import get_learned
+from .learned_answers import get_learned, get_rejected
 from .ollama_provider import OLLAMA_MODEL, suggest as suggest_with_ollama
 from .prompt_detector import normalize_prompt
 from .search_cache import SearchCache
@@ -26,6 +26,7 @@ def result_is_current(request_id: int, current_request_id: int, prompt: str, cur
 class SearchWorker:
     FAILURE_COOLDOWN_SECONDS = 30
     MAX_OLLAMA_PASSES = max(1, min(8, int(os.environ.get("KRILLION_OLLAMA_PASSES", "5"))))
+    MAX_CANDIDATES = max(8, min(40, int(os.environ.get("KRILLION_MAX_CANDIDATES", "24"))))
 
     def __init__(self, events: queue.Queue, cache: SearchCache | None = None) -> None:
         self.events = events
@@ -89,11 +90,18 @@ class SearchWorker:
 
         def work() -> None:
             try:
+                historical_rejections = get_rejected(prompt, mode=mode_key)
+                rejected_keys = {answer.casefold().strip() for answer in historical_rejections}
                 cached_candidates = None if force or exclusions else self.cache.get_candidates(cache_prompt)
                 cached_results = None if force or exclusions else self.cache.get(cache_prompt)
                 if cached_candidates is not None and cached_results is not None:
-                    emit(cached_candidates, True, None, "cached")
-                    return
+                    cached_candidates = [
+                        item for item in cached_candidates
+                        if item["answer"].casefold().strip() not in rejected_keys
+                    ]
+                    if cached_candidates:
+                        emit(cached_candidates, True, None, "cached")
+                        return
 
                 _core, excluded = split_prompt_exclusions(prompt)
                 learned_candidates = [
@@ -106,15 +114,16 @@ class SearchWorker:
                     emit(learned_candidates, False, None, "learned")
                 # Run local lookup alongside the first speed-focused Ollama pass.
                 # Large dictionary/syllable data must not delay the first answer.
-                local_exclusions = list(excluded) + list(excluded_answers or [])
+                local_exclusions = list(excluded) + list(excluded_answers or []) + historical_rejections
                 dictionary_future = _LEXICON_EXECUTOR.submit(
-                    local_candidates, prompt, local_exclusions, 8, mode=mode_key
+                    local_candidates, prompt, local_exclusions, 5, mode=mode_key
                 )
                 dictionary: list[dict] = []
                 hints: list[str] = []
                 model_candidates: list[dict] = []
                 model_error: str | None = None
                 generation_complete = threading.Event()
+                last_partial_emit = 0.0
 
                 def merge_candidates(*groups: list[dict]) -> list[dict]:
                     merged: list[dict] = []
@@ -125,6 +134,8 @@ class SearchWorker:
                             if answer_key and answer_key not in seen:
                                 seen.add(answer_key)
                                 merged.append(item)
+                                if len(merged) >= self.MAX_CANDIDATES:
+                                    return merged
                     return merged
 
                 def publish_dictionary(future) -> None:
@@ -157,6 +168,11 @@ class SearchWorker:
                             previous_count = len(model_candidates)
 
                             def publish_partial(partial: list[dict]) -> None:
+                                nonlocal last_partial_emit
+                                now = time.monotonic()
+                                if now - last_partial_emit < 0.2:
+                                    return
+                                last_partial_emit = now
                                 ready_dictionary = dictionary_future.result() if dictionary_future.done() else []
                                 combined = merge_candidates(
                                     learned_candidates, ready_dictionary, model_candidates, partial,
@@ -169,6 +185,9 @@ class SearchWorker:
                                 excluded_answers=(
                                     list(excluded_answers or [])
                                     + live_exclusions
+                                    + historical_rejections
+                                    + [item["answer"] for item in learned_candidates]
+                                    + [item["answer"] for item in dictionary]
                                     + [item["answer"] for item in model_candidates]
                                 ),
                                 on_update=publish_partial,
@@ -177,10 +196,12 @@ class SearchWorker:
                             )
                             for item in pass_candidates:
                                 answer_key = item["answer"].casefold().strip()
-                                if answer_key not in seen_answers:
+                                if answer_key not in seen_answers and len(model_candidates) < self.MAX_CANDIDATES:
                                     seen_answers.add(answer_key)
                                     model_candidates.append(item)
                             if len(model_candidates) == previous_count:
+                                break
+                            if len(merge_candidates(learned_candidates, dictionary, model_candidates)) >= self.MAX_CANDIDATES:
                                 break
                             ready_dictionary = dictionary_future.result() if dictionary_future.done() else []
                             emit(
@@ -200,7 +221,8 @@ class SearchWorker:
                 candidate_keys: set[str] = set()
                 for item in merge_candidates(learned_candidates, dictionary, model_candidates):
                     answer_key = item["answer"].casefold().strip()
-                    if answer_key not in live_exclusions and answer_key not in candidate_keys:
+                    if (answer_key not in live_exclusions and answer_key not in rejected_keys
+                            and answer_key not in candidate_keys):
                         candidate_keys.add(answer_key)
                         candidates.append(item)
                 source = "ollama" if model_candidates else ("learned" if learned_candidates else "local-fallback")
