@@ -34,6 +34,8 @@ To select another Hugging Face Llama 3.1 Instruct checkpoint, set `KRILLION_BASE
 
 Clicking `✓` beside a candidate appends that confirmed answer to `%LOCALAPPDATA%\KrillionSolver\training_examples.jsonl`. Clicking `✕` saves the rejected candidate to `%LOCALAPPDATA%\KrillionSolver\rejected_answers.jsonl`. The trainer first runs supervised fine-tuning on confirmed examples, then applies a DPO preference step. If a rejected answer has a confirmed replacement for the same prompt, that answer is preferred. Otherwise, `UNCERTAIN` is preferred over repeating the rejected answer. This lets every rejection participate in training while avoiding inventing a replacement. The supervised training set requires at least 10 unique examples. None of this changes the running model until training completes and you recreate its Ollama tag.
 
+Short examples are packed into full training blocks to reduce padding work. Packing retains every example and all three epochs, with examples separated by the tokenizer's end marker. Batch size, LoRA rank, precision, checkpoints, and GGUF quantization keep their reliability-focused settings.
+
 ## Import and run with Ollama
 
 The script writes a Q4_K_M GGUF and a matching `training/export/Modelfile`. After export:

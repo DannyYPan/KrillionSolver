@@ -11,6 +11,40 @@ from .prompt_detector import detect_prompt
 from .site_adapters import ADAPTERS
 
 
+_ACCEPTED_TEXT_SCRIPT = r"""
+() => {
+  const blocked = 'input, textarea, select, form, [contenteditable="true"], [role="textbox"]';
+  const selectors = [
+    '[data-answer]', '[data-testid*="answer" i]', '[data-testid*="result" i]',
+    '[class*="accepted" i]', '[class*="correct" i]', '[class*="answer" i]',
+    '[class*="result" i]', '[id*="accepted" i]', '[id*="answer" i]',
+    '[aria-label*="accepted" i]', '[aria-label*="correct" i]'
+  ];
+  const nodes = new Set(document.querySelectorAll(selectors.join(',')));
+  document.querySelectorAll('body *').forEach((node) => {
+    const text = (node.innerText || '').trim();
+    if (text && text.length <= 160 &&
+        /(?:\bcorrect\b|\baccepted\b|[+]?\d+\s*(?:points?|pts?)\b|✓)/i.test(text)) {
+      nodes.add(node);
+    }
+  });
+  return [...nodes]
+    .filter((node) => !node.matches(blocked) && !node.closest(blocked) && !node.querySelector(blocked))
+    .map((node) => (node.innerText || node.textContent || '').trim())
+    .filter((text) => text && text.length <= 500)
+    .join('\n');
+}
+"""
+
+
+def extract_accepted_text(page: Any) -> str:
+    """Read only DOM regions that look like submitted/accepted answer rows."""
+    try:
+        return str(page.evaluate(_ACCEPTED_TEXT_SCRIPT) or "")
+    except (AttributeError, TypeError, ValueError):
+        return ""
+
+
 class BrowserMonitor(threading.Thread):
     def __init__(self, site: str, url: str, events: queue.Queue, interval: float = 1.0) -> None:
         super().__init__(name="browser-monitor", daemon=True)
@@ -36,9 +70,11 @@ class BrowserMonitor(threading.Thread):
                 while not self._stop_event.is_set():
                     try:
                         extracted = page.locator("body").inner_text(timeout=2500)
+                        accepted_text = extract_accepted_text(page)
                         detection = detect_prompt(extracted, adapter.key)
                         self.events.put(("diagnostic", {
                             "text": detection.extracted_text,
+                            "accepted_text": accepted_text,
                             "prompt": detection.prompt,
                             "method": detection.method,
                             "error": detection.error,

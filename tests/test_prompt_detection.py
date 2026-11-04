@@ -10,6 +10,16 @@ class PromptDetectionTests(unittest.TestCase):
     def test_category_and_non_question_instruction(self):
         self.assertEqual(detect_prompt("Name an island in the Pacific").prompt, "Name an island in the Pacific")
 
+    def test_preserves_prompt_qualifiers_split_across_dom_lines(self):
+        text = "Round 3\nName a country\nthat borders China\nSubmit\n00:18"
+        self.assertEqual(detect_prompt(text).prompt, "Name a country that borders China")
+
+        text = "Name a food you'd buy\nat a state fair or carnival\nSubmit"
+        self.assertEqual(
+            detect_prompt(text).prompt,
+            "Name a food you'd buy at a state fair or carnival",
+        )
+
     def test_fill_blank(self):
         self.assertEqual(detect_prompt("Fill in the blank: To be or not to be").prompt, "Fill in the blank: To be or not to be")
 

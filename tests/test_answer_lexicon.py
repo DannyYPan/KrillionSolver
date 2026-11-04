@@ -1,3 +1,4 @@
+import json
 import sys
 import os
 import tempfile
@@ -141,6 +142,40 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertNotIn("Japan", answers)
         self.assertEqual(candidate_check("Japan", prompt), "uncertain")
 
+    def test_country_symbol_and_multiple_region_qualifiers(self):
+        star_prompt = "Name a country whose flag has a star on it"
+        star_answers = [item["answer"] for item in local_candidates(star_prompt, limit=80)]
+        self.assertIn("United States", star_answers)
+        self.assertNotIn("India", star_answers)
+
+        region_prompt = "Name a Scandinavian or Nordic country or territory"
+        region_answers = [item["answer"] for item in local_candidates(region_prompt, limit=80)]
+        self.assertIn("Norway", region_answers)
+        self.assertIn("Finland", region_answers)
+        self.assertIn("Greenland", region_answers)
+        self.assertNotIn("United States", region_answers)
+
+    def test_country_island_and_border_qualifiers(self):
+        island = [item["answer"] for item in local_candidates("Name an island country", limit=80)]
+        self.assertIn("Japan", island)
+        self.assertNotIn("United States", island)
+
+        china_border = [
+            item["answer"] for item in local_candidates("Name a country that borders China", limit=80)
+        ]
+        self.assertIn("Mongolia", china_border)
+        self.assertNotIn("China", china_border)
+        self.assertNotIn("United States", china_border)
+
+    def test_specific_trivia_qualifiers_do_not_use_generic_lists(self):
+        self.assertEqual(local_candidates("Name a combat sport", limit=20), [])
+        self.assertEqual(
+            local_candidates("Name a food you'd buy at a state fair or carnival", limit=20), [],
+        )
+        self.assertEqual(
+            local_candidates("Name an animal that lives in swamps or wetlands", limit=20), [],
+        )
+
     def test_interjection_and_filler_word_lists_are_separate(self):
         interjections = [item["answer"] for item in local_candidates("Name an interjection", limit=30)]
         fillers = [item["answer"] for item in local_candidates("Name a filler word", limit=30)]
@@ -179,6 +214,15 @@ class AnswerLexiconTests(unittest.TestCase):
             self.assertEqual(learned_answers.get_learned("Name a city"), ["New York"])
             self.assertEqual(learned_answers.get_learned("Name a city", ["new york"]), [])
             self.assertFalse(learned_answers.remember("Name a city", "   "))
+
+    def test_game_accepted_answer_writes_full_prompt_to_training_data(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"LOCALAPPDATA": directory}):
+            prompt = "Name a country that borders China"
+            self.assertTrue(learned_answers.remember(prompt, "Mongolia", source="game-page"))
+            rows = [
+                json.loads(line) for line in learned_answers._training_path().read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertIn({"prompt": prompt, "answer": "Mongolia"}, rows)
 
     def test_saved_answer_is_an_instant_local_candidate_for_any_prompt(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"LOCALAPPDATA": directory}):

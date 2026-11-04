@@ -71,6 +71,8 @@ class KrillionSolverApp(tk.Tk):
             "Answer.TLabel", background="#ffffff", foreground="#0f172a",
             font=("Segoe UI Semibold", 10),
         )
+        style.configure("LlamaDot.TLabel", background="#ffffff", foreground="#16a34a", font=("Segoe UI", 7))
+        style.configure("LexiconDot.TLabel", background="#ffffff", foreground="#dc2626", font=("Segoe UI", 7))
         style.configure("Saved.TLabel", background="#ffffff", foreground="#15803d", font=("Segoe UI", 8))
         style.configure("Status.TLabel", background="#eef2f7", foreground="#475569", font=("Segoe UI", 9))
         style.configure("Primary.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6))
@@ -142,6 +144,8 @@ class KrillionSolverApp(tk.Tk):
         ideas_scrollbar.grid(row=0, column=1, sticky="ns")
         self.ideas_inner = ttk.Frame(self.ideas_canvas, style="Card.TFrame")
         self.ideas_window = self.ideas_canvas.create_window((0, 0), window=self.ideas_inner, anchor="nw")
+        self.answers_content = ttk.Frame(self.ideas_inner, style="Card.TFrame")
+        self.answers_content.pack(fill="x", expand=True)
         self.ideas_inner.bind("<Configure>", lambda _e: self.ideas_canvas.configure(scrollregion=self.ideas_canvas.bbox("all")))
         self.ideas_canvas.bind("<Configure>", lambda e: self.ideas_canvas.itemconfigure(self.ideas_window, width=e.width))
 
@@ -308,8 +312,9 @@ class KrillionSolverApp(tk.Tk):
 
     def clear_results(self, reset_scroll: bool = False) -> None:
         self._rendered_signature = None
-        for child in self.ideas_inner.winfo_children():
-            child.destroy()
+        self.answers_content.destroy()
+        self.answers_content = ttk.Frame(self.ideas_inner, style="Card.TFrame")
+        self.answers_content.pack(fill="x", expand=True)
         if reset_scroll:
             self._scroll_results_to_top()
             # Repeat after Tkinter recalculates the now-empty canvas layout.
@@ -320,20 +325,22 @@ class KrillionSolverApp(tk.Tk):
         candidates = [item for item in candidates if item.get("answer", "").casefold() not in hidden]
         self.current_candidates = list(candidates)
         signature = tuple(
-            (str(item.get("answer", "")).casefold(), bool(item.get("confirmed")))
+            (str(item.get("answer", "")).casefold(), bool(item.get("confirmed")), item.get("origin"))
             for item in candidates
         ) or (("__empty__", searching),)
-        if signature == self._rendered_signature:
+        if signature == self._rendered_signature and self.answers_content.winfo_children():
             return
-        self._rendered_signature = signature
-        for child in self.ideas_inner.winfo_children():
-            child.destroy()
+        replacement = ttk.Frame(self.ideas_inner, style="Card.TFrame")
         if not candidates:
             message = "Waiting for Ollama's answer…" if searching else "No answer was returned. Check that Ollama is running and the configured model is installed."
-            ttk.Label(self.ideas_inner, text=message).pack(anchor="w", padx=6, pady=6)
+            ttk.Label(replacement, text=message).pack(anchor="w", padx=6, pady=6)
+            replacement.pack(fill="x", expand=True)
+            old_content, self.answers_content = self.answers_content, replacement
+            old_content.destroy()
+            self._rendered_signature = signature
             return
         for number, candidate in enumerate(candidates, start=1):
-            card = ttk.Frame(self.ideas_inner, padding=(6, 3), style="Answer.TFrame")
+            card = ttk.Frame(replacement, padding=(6, 3), style="Answer.TFrame")
             card.pack(fill="x", anchor="w", padx=1, pady=1)
             buttons = ttk.Frame(card, style="Card.TFrame")
             buttons.pack(side="right", anchor="e")
@@ -350,10 +357,22 @@ class KrillionSolverApp(tk.Tk):
                 command=lambda answer=candidate["answer"]: self._reject_answer(answer),
             ).pack(side="right", padx=(0, 4))
             saved_mark = "✓ " if candidate.get("confirmed") else ""
+            origin = candidate.get("origin", "lexicon" if candidate.get("confirmed") else "llama")
+            ttk.Label(
+                card, text="●",
+                style="LlamaDot.TLabel" if origin == "llama" else "LexiconDot.TLabel",
+            ).pack(side="left", padx=(0, 3))
             name = ttk.Label(
                 card, text=f"{number}. {saved_mark}{candidate['answer']}", style="Answer.TLabel",
             )
             name.pack(side="left", anchor="w", fill="x", expand=True)
+        replacement.pack(fill="x", expand=True)
+        old_content, self.answers_content = self.answers_content, replacement
+        old_content.destroy()
+        self._rendered_signature = signature
+        self.after_idle(lambda: self.ideas_canvas.configure(
+            scrollregion=self.ideas_canvas.bbox("all")
+        ))
 
     def _remove_said_answers(self, page_text: str, detected_prompt: str | None) -> None:
         if not self.current_prompt or normalize_prompt(detected_prompt or "") != normalize_prompt(self.current_prompt):
@@ -444,9 +463,10 @@ class KrillionSolverApp(tk.Tk):
                     self.browser_status.set("Error")
                     self.search_status.set(f"Browser error: {value}")
                 elif kind == "prompt":
+                    pending_search = None
                     self._new_prompt(value)
                 elif kind == "diagnostic":
-                    self._remove_said_answers(value["text"], value.get("prompt"))
+                    self._remove_said_answers(value.get("accepted_text", ""), value.get("prompt"))
                     if self.diagnostics.get():
                         self.diag_text.configure(state="normal")
                         self.diag_text.delete("1.0", "end")
@@ -468,7 +488,10 @@ class KrillionSolverApp(tk.Tk):
                             pending_search = {**preferred, "candidates": merged}
         except queue.Empty:
             pass
-        if pending_search is not None:
+        if pending_search is not None and result_is_current(
+            pending_search["request_id"], self.request_id,
+            pending_search["prompt"], self.current_prompt,
+        ):
             self._render_results(pending_search)
         if self.winfo_exists():
             self.after(100, self._poll_events)

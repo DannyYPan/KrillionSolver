@@ -113,6 +113,10 @@ def parse_suggestions(
     kind = prompt_kind(core)
     closed_category = bool(kind and kind[0] in {
         "trivia", "tv_character", "sitcom", "country", "country_region",
+        "ending", "starting", "contains", "compound", "english_word", "syllables",
+    })
+    strict_lexical = bool(kind and kind[0] in {
+        "ending", "starting", "contains", "compound", "english_word", "syllables",
     })
     for answer in ordered:
         key = re.sub(r"\W+", " ", answer.casefold()).strip()
@@ -124,6 +128,8 @@ def parse_suggestions(
             continue
         check = candidate_check(answer, core) if (check_local or closed_category) else "uncertain"
         if check == "reject":
+            continue
+        if strict_lexical and check != "match":
             continue
         if not check_local and closed_category and check != "match":
             continue

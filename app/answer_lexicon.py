@@ -13,7 +13,11 @@ _REGIONAL_COUNTRIES = {
     "north america": set("Antigua and Barbuda|Bahamas|Barbados|Belize|Canada|Costa Rica|Cuba|Dominica|Dominican Republic|El Salvador|Grenada|Guatemala|Haiti|Honduras|Jamaica|Mexico|Nicaragua|Panama|Saint Kitts and Nevis|Saint Lucia|Trinidad and Tobago|United States".split("|")),
     "south america": set("Argentina|Bolivia|Brazil|Chile|Colombia|Ecuador|Guyana|Paraguay|Peru|Suriname|Uruguay|Venezuela".split("|")),
     "oceania": set("Australia|Fiji|Kiribati|Marshall Islands|Micronesia|Nauru|New Zealand|Palau|Papua New Guinea|Samoa|Solomon Islands|Tonga|Tuvalu|Vanuatu".split("|")),
+    "nordic": set("Denmark|Finland|Iceland|Norway|Sweden|Greenland|Faroe Islands|Åland".split("|")),
+    "scandinavia": set("Denmark|Norway|Sweden".split("|")),
 }
+
+_TERRITORIES = ("Greenland", "Faroe Islands", "Åland")
 
 _ENDING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:ends?\s+(?:in|with)|ending\s+(?:in|with))\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
 _STARTING = re.compile(r"\b(?:what|which|word|words|name|give me|think of|something)\b.*?\b(?:start(?:s|ing)?\s+(?:with|in)|beginning\s+with)\s+(?:(?:the\s+)?(?:letter\s+)?) [-\"'“”]?([a-z]{1,20})\b", re.I | re.X)
@@ -38,7 +42,7 @@ _COUNTRY = re.compile(
     r"|\bcountr(?:y|ies)\b.{0,100}\b(?:with|whose|that|in|on|above|over|under|near)\b",
     re.I,
 )
-_REGION = re.compile(r"\b(?:european|asian|african|north american|south american|oceanian|in europe|in asia|in africa|in north america|in south america|in oceania)\b", re.I)
+_REGION = re.compile(r"\b(?:european|asian|african|north american|south american|oceanian|nordic|scandinavian|in europe|in asia|in africa|in north america|in south america|in oceania|in scandinavia)\b", re.I)
 _FLAG_COLORS = {
     "red": "Canada|China|France|Germany|India|Indonesia|Italy|Japan|Mexico|Netherlands|Norway|Poland|Portugal|Russia|Spain|Switzerland|Turkey|United Kingdom|United States|Vietnam",
     "blue": "Argentina|Australia|Brazil|France|Greece|India|Israel|Netherlands|New Zealand|Russia|Sweden|United Kingdom|United States",
@@ -64,8 +68,25 @@ _EXACT_FLAG_COLORS = {
     "Ukraine": {"blue", "yellow"}, "United Kingdom": {"red", "white", "blue"},
     "United States": {"red", "white", "blue"}, "Vietnam": {"red", "yellow"},
 }
+_FLAG_SYMBOLS = {
+    "star": set("Algeria|Angola|Australia|Azerbaijan|Bosnia and Herzegovina|Brazil|Burkina Faso|Burundi|Cameroon|Cape Verde|Central African Republic|Chile|China|Comoros|Cuba|Democratic Republic of the Congo|Djibouti|Dominica|East Timor|Equatorial Guinea|Ethiopia|Ghana|Grenada|Guinea-Bissau|Honduras|Israel|Jordan|Liberia|Libya|Malaysia|Marshall Islands|Mauritania|Micronesia|Morocco|Mozambique|Myanmar|Nauru|New Zealand|North Korea|Pakistan|Panama|Papua New Guinea|Paraguay|Philippines|Saint Kitts and Nevis|Samoa|Senegal|Singapore|Slovenia|Solomon Islands|Somalia|South Sudan|Suriname|Syria|Tajikistan|Togo|Tunisia|Turkey|Turkmenistan|Tuvalu|United States|Uzbekistan|Venezuela|Vietnam|Zimbabwe".split("|")),
+    "cross": set("Denmark|Dominican Republic|Finland|Georgia|Greece|Iceland|Norway|Sweden|Switzerland|United Kingdom".split("|")),
+    "crescent": set("Algeria|Azerbaijan|Libya|Malaysia|Maldives|Mauritania|Pakistan|Singapore|Tunisia|Turkey|Turkmenistan|Uzbekistan".split("|")),
+}
 _LANDLOCKED = set("Afghanistan|Armenia|Austria|Azerbaijan|Belarus|Bhutan|Bolivia|Botswana|Burkina Faso|Burundi|Central African Republic|Chad|Czechia|Eswatini|Ethiopia|Hungary|Kazakhstan|Kyrgyzstan|Laos|Lesotho|Liechtenstein|Luxembourg|Malawi|Mali|Moldova|Mongolia|Nepal|Niger|North Macedonia|Paraguay|Rwanda|San Marino|Serbia|Slovakia|South Sudan|Switzerland|Tajikistan|Turkmenistan|Uganda|Uzbekistan|Vatican City|Zambia|Zimbabwe".split("|"))
 _SMALL_POPULATION = set("Andorra|Antigua and Barbuda|Dominica|Kiribati|Liechtenstein|Marshall Islands|Monaco|Nauru|Palau|Saint Kitts and Nevis|San Marino|Seychelles|Tuvalu|Vatican City".split("|"))
+_ISLAND_COUNTRIES = set("Antigua and Barbuda|Australia|Bahamas|Bahrain|Barbados|Brunei|Cabo Verde|Comoros|Cuba|Cyprus|Dominica|Dominican Republic|Fiji|Grenada|Haiti|Iceland|Indonesia|Ireland|Jamaica|Japan|Kiribati|Madagascar|Maldives|Malta|Marshall Islands|Mauritius|Micronesia|Nauru|New Zealand|Palau|Papua New Guinea|Philippines|Saint Kitts and Nevis|Saint Lucia|Saint Vincent and the Grenadines|Samoa|Seychelles|Singapore|Solomon Islands|Sri Lanka|Taiwan|Timor-Leste|Tonga|Trinidad and Tobago|Tuvalu|United Kingdom|Vanuatu".split("|"))
+_COUNTRY_BORDERS = {
+    "china": set("Afghanistan|Bhutan|India|Kazakhstan|North Korea|Kyrgyzstan|Laos|Mongolia|Myanmar|Nepal|Pakistan|Russia|Tajikistan|Vietnam".split("|")),
+    "united states": {"Canada", "Mexico"},
+    "canada": {"United States"},
+    "mexico": {"Belize", "Guatemala", "United States"},
+    "india": set("Bangladesh|Bhutan|China|Myanmar|Nepal|Pakistan".split("|")),
+    "brazil": set("Argentina|Bolivia|Colombia|Guyana|Paraguay|Peru|Suriname|Uruguay|Venezuela".split("|")),
+    "france": set("Andorra|Belgium|Germany|Italy|Luxembourg|Monaco|Spain|Switzerland".split("|")),
+    "germany": set("Austria|Belgium|Czechia|Denmark|France|Luxembourg|Netherlands|Poland|Switzerland".split("|")),
+    "russia": set("Azerbaijan|Belarus|China|Estonia|Finland|Georgia|Kazakhstan|Latvia|Lithuania|Mongolia|North Korea|Norway|Poland|Ukraine".split("|")),
+}
 _COMMON_COUNTRIES = "United States|Canada|China|India|Brazil|Australia|Japan|Germany|France|Italy|Mexico|United Kingdom|Spain|South Korea|South Africa|Argentina|New Zealand|Sweden|Norway|Switzerland".split("|")
 _TV_CHARACTERS = {
     "how_i_met_your_mother": (
@@ -209,6 +230,15 @@ def _requested_subject(prompt: str) -> str:
     )[0].strip(" .,:;?!\"'")
 
 
+def _region_name(value: str) -> str:
+    name = value.casefold().removeprefix("in ")
+    return {
+        "north american": "north america", "south american": "south america",
+        "oceanian": "oceania", "european": "europe", "asian": "asia",
+        "african": "africa", "scandinavian": "scandinavia",
+    }.get(name, name)
+
+
 def prompt_kind(prompt: str) -> tuple[str, str] | None:
     if _TV_CHARACTER_PROMPT.search(prompt):
         for show_key, alias in _SHOW_ALIASES.items():
@@ -251,8 +281,7 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
     if _COUNTRY.search(prompt):
         region = _REGION.search(prompt)
         if region:
-            region_name = region.group(0).casefold().replace("in ", "").replace("north american", "north america").replace("south american", "south america").replace("oceanian", "oceania").replace("european", "europe").replace("asian", "asia").replace("african", "africa")
-            return "country_region", region_name
+            return "country_region", _region_name(region.group(0))
         return "country", ""
     match = _CONTAINS.search(prompt)
     if match:
@@ -265,6 +294,21 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
 def _qualified_countries(prompt: str, category: str, region: str) -> list[str]:
     eligible = list(_COUNTRIES)
     lowered = prompt.casefold()
+    if re.search(r"\bterritor(?:y|ies)\b", lowered):
+        eligible.extend(name for name in _TERRITORIES if name not in eligible)
+    if re.search(r"\bisland\s+(?:country|nation)|(?:country|nation)\s+(?:that\s+)?is\s+an?\s+island\b", lowered):
+        eligible = [name for name in eligible if name in _ISLAND_COUNTRIES]
+    border_match = re.search(
+        r"\b(?:borders?|bordering|neighbou?rs?|adjacent\s+to)\s+"
+        r"(?:the\s+)?([a-z][a-z .'-]{1,40}?)(?=\s*(?:[,;?.]|$|\b(?:and|or|but|with|without|that|which)\b))",
+        lowered,
+    )
+    if border_match:
+        bordered = border_match.group(1).strip()
+        allowed = _COUNTRY_BORDERS.get(bordered)
+        # An unrecognized geographic qualifier must never fall back to the
+        # unfiltered common-country list.
+        eligible = [name for name in eligible if allowed is not None and name in allowed]
     if "coast" in lowered or "coastal" in lowered or "shoreline" in lowered or "landlocked" in lowered:
         if "landlocked" in lowered or re.search(r"\b(?:no|without|lack(?:s|ing)?)\b.{0,30}\b(?:coast|coastal|shoreline)", lowered):
             eligible = [name for name in eligible if name in _LANDLOCKED]
@@ -277,15 +321,22 @@ def _qualified_countries(prompt: str, category: str, region: str) -> list[str]:
             eligible = [name for name in eligible if _EXACT_FLAG_COLORS.get(name) == requested]
         else:
             eligible = [name for name in eligible if all(name in _FLAG_COLORS[color].split("|") for color in colors)]
+    if re.search(r"\bflag|banner\b", lowered):
+        for symbol, matching in _FLAG_SYMBOLS.items():
+            if re.search(rf"\b{re.escape(symbol)}s?\b", lowered):
+                eligible = [name for name in eligible if name in matching]
     if re.search(r"\b(?:over|more than|greater than|above|at least)\s+100[,.]?000\b|\bpopulation.{0,30}100[,.]?000\b", lowered):
         eligible = [name for name in eligible if name not in _SMALL_POPULATION]
-    region_name = region
-    if category != "country_region":
-        region_match = _REGION.search(prompt)
-        region_name = region_match.group(0).casefold().replace("in ", "").replace("north american", "north america").replace("south american", "south america").replace("oceanian", "oceania").replace("european", "europe").replace("asian", "asia").replace("african", "africa") if region_match else ""
-    if region_name:
-        region_names = _REGIONAL_COUNTRIES.get(region_name, set())
-        eligible = [name for name in eligible if name in region_names]
+    requested_regions = list(dict.fromkeys(
+        _region_name(match.group(0)) for match in _REGION.finditer(prompt)
+    ))
+    if not requested_regions and region:
+        requested_regions = [region]
+    if requested_regions:
+        allowed = set().union(*(
+            _REGIONAL_COUNTRIES.get(name, set()) for name in requested_regions
+        ))
+        eligible = [name for name in eligible if name in allowed]
     return eligible
 
 
@@ -356,8 +407,27 @@ def satisfies_constraint(answer: str, prompt: str) -> bool:
 
 def _qualified_trivia(prompt: str, category: str) -> list[str]:
     answers = list(_TRIVIA_LISTS.get(category, ()))
+    subject = _requested_subject(prompt).casefold()
+    simple_subjects = {
+        "animal": r"(?:(?:sea|marine|ocean)\s+)?(?:animal|creature)s?",
+        "food": r"foods?", "fruit": r"fruits?", "vegetable": r"vegetables?",
+        "sport": r"sports?", "instrument": r"(?:musical\s+)?instruments?",
+        "occupation": r"(?:job|occupation|profession)s?", "vehicle": r"vehicles?",
+        "flower": r"flowers?", "tree": r"trees?", "planet": r"planets?",
+        "gemstone": r"(?:gemstone|gem)s?", "board_game": r"board\s+games?",
+        "dinosaur": r"dinosaurs?", "body_part": r"body\s+parts?",
+        "interjection": r"interjections?",
+        "filler_word": r"(?:filler|hesitation)\s+(?:word|phrase)s?",
+    }
+    expected_subject = simple_subjects.get(category)
+    if expected_subject and not re.fullmatch(expected_subject, subject, re.I):
+        return []
     if category == "animal":
         lowered = prompt.casefold()
+        # Habitat and other semantic qualifiers need prompt-specific knowledge;
+        # a generic animal list would be actively misleading.
+        if re.search(r"\b(?:lives?|living|found|habitats?)\b", lowered):
+            return []
         if re.search(r"\b(?:sea|marine|ocean)\b", lowered):
             answers = [answer for answer in answers if answer in _SEA_ANIMALS]
         if re.search(r"\b(?:isn['’]?t|is not|not)\b.{0,25}\b(?:fish|bird)\b", lowered):

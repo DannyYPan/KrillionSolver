@@ -38,6 +38,12 @@ _INSTRUCTION_TEXT = re.compile(
     r"play with friends|join a public room|last one floating wins)\b",
     re.IGNORECASE,
 )
+_PROMPT_CONTINUATION = re.compile(
+    r"^(?:that|which|whose|who|where|with|without|from|in|on|at|to|for|of|"
+    r"used|using|having|ending|starting|containing|including|but|and|or|"
+    r"you(?:'|â€™)?d|it(?:'|â€™)?s|isn(?:'|â€™)?t|doesn(?:'|â€™)?t)\b|^[([]",
+    re.I,
+)
 
 
 def _clean_lines(extracted_text: str) -> list[str]:
@@ -82,11 +88,23 @@ def detect_prompt(extracted_text: str, site: str = "krillion") -> Detection:
     lines = _clean_lines(extracted_text)
     # Prefer question/instruction lines and reject common game chrome.
     candidates: list[str] = []
-    for line in lines:
+    for index, line in enumerate(lines):
         if len(line) < 8 or len(line) > 240 or _NOISE.match(line) or _INSTRUCTION_TEXT.search(line):
             continue
         if _PROMPT_START.match(line):
-            candidates.append(line)
+            parts = [line]
+            # Browser innerText can put a prompt's qualifier in a separate
+            # block. Preserve those lines rather than searching only the base
+            # phrase (for example, "Name a country" + "that borders China").
+            for continuation in lines[index + 1:index + 4]:
+                if (_NOISE.match(continuation) or _PROMPT_START.match(continuation)
+                        or not _PROMPT_CONTINUATION.match(continuation)):
+                    break
+                joined = " ".join(parts + [continuation])
+                if len(joined) > 240:
+                    break
+                parts.append(continuation)
+            candidates.append(" ".join(parts))
     if candidates:
         return Detection(candidates[-1], f"{site}-text-heuristic", extracted_text)
 

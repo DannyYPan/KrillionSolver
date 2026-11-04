@@ -4,7 +4,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from app.browser_manager import BrowserMonitor
+from app.browser_manager import BrowserMonitor, extract_accepted_text
 
 
 class _FakePage:
@@ -17,6 +17,8 @@ class _FakePage:
         self.url = url
     def locator(self, _selector):
         return types.SimpleNamespace(inner_text=lambda **_kwargs: "Name an island in the Pacific")
+    def evaluate(self, _script):
+        return "Alice: Fiji +60 points"
     def is_closed(self): return self.closed
 
 
@@ -61,6 +63,11 @@ class BrowserMonitorTests(unittest.TestCase):
                 self.assertEqual(closed, [True])
                 self.assertIn(("browser", f"Open · {url}"), observed)
                 self.assertIn(("prompt", "Name an island in the Pacific"), observed)
+                diagnostic = next(value for kind, value in observed if kind == "diagnostic")
+                self.assertEqual(diagnostic["accepted_text"], "Alice: Fiji +60 points")
+
+    def test_accepted_text_gracefully_requires_dom_support(self):
+        self.assertEqual(extract_accepted_text(object()), "")
 
 
 if __name__ == "__main__":

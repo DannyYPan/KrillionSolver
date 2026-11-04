@@ -19,6 +19,13 @@ class OllamaProviderTests(unittest.TestCase):
         )
         self.assertEqual([item["answer"] for item in results], ["archetype"])
 
+    def test_rejects_invented_words_for_explicit_word_prompts(self):
+        results = parse_suggestions(
+            "SAFE: florpingly\nMORE OPTIONS: archetype",
+            "Name an English word ending in -type",
+        )
+        self.assertEqual([item["answer"] for item in results], ["archetype"])
+
     def test_fast_pass_rejects_fragments_and_page_title_text(self):
         prompt = "Name an animal with a shell"
         self.assertEqual(parse_suggestions("SAFE: ab", prompt, check_local=False), [])
@@ -41,12 +48,12 @@ class OllamaProviderTests(unittest.TestCase):
         self.assertEqual([item["answer"] for item in shell], ["Scaphopod"])
         self.assertEqual([item["answer"] for item in movie], ["Up"])
 
-    def test_lexicon_puts_an_unknown_matching_word_after_a_confirmed_word(self):
+    def test_lexicon_removes_an_unknown_matching_word(self):
         results = parse_suggestions(
             "SAFE: nonsensextype\nMORE OPTIONS: archetype",
             "Name an English word ending in -type",
         )
-        self.assertEqual([item["answer"] for item in results], ["archetype", "nonsensextype"])
+        self.assertEqual([item["answer"] for item in results], ["archetype"])
 
     def test_does_not_parse_unstructured_hallucinated_output(self):
         self.assertEqual(parse_suggestions("Maybe Canada is valid.", "Name a country"), [])

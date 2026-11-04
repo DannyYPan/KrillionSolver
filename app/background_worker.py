@@ -105,7 +105,7 @@ class SearchWorker:
 
                 _core, excluded = split_prompt_exclusions(prompt)
                 learned_candidates = [
-                    {"answer": answer, "confirmed": True}
+                    {"answer": answer, "confirmed": True, "origin": "lexicon"}
                     for answer in get_learned(
                         prompt, list(excluded) + list(excluded_answers or []), mode=mode_key
                     )
@@ -125,6 +125,9 @@ class SearchWorker:
                 generation_complete = threading.Event()
                 last_partial_emit = 0.0
 
+                def tagged(items: list[dict], origin: str) -> list[dict]:
+                    return [{**item, "origin": item.get("origin", origin)} for item in items]
+
                 def merge_candidates(*groups: list[dict]) -> list[dict]:
                     merged: list[dict] = []
                     seen: set[str] = set()
@@ -142,7 +145,7 @@ class SearchWorker:
                     if generation_complete.is_set():
                         return
                     try:
-                        ready = future.result()
+                        ready = tagged(future.result(), "lexicon")
                     except Exception:
                         return
                     if ready:
@@ -159,7 +162,7 @@ class SearchWorker:
                         seen_answers: set[str] = set()
                         for pass_number in range(self.MAX_OLLAMA_PASSES):
                             if pass_number > 0 and not dictionary:
-                                dictionary = dictionary_future.result()
+                                dictionary = tagged(dictionary_future.result(), "lexicon")
                                 hints = list(dict.fromkeys(item["answer"] for item in dictionary))[:12]
                             with self._lock:
                                 if self._active_key != key:
@@ -173,9 +176,13 @@ class SearchWorker:
                                 if now - last_partial_emit < 0.2:
                                     return
                                 last_partial_emit = now
-                                ready_dictionary = dictionary_future.result() if dictionary_future.done() else []
+                                ready_dictionary = (
+                                    tagged(dictionary_future.result(), "lexicon")
+                                    if dictionary_future.done() else []
+                                )
                                 combined = merge_candidates(
-                                    learned_candidates, ready_dictionary, model_candidates, partial,
+                                    learned_candidates, ready_dictionary, model_candidates,
+                                    tagged(partial, "llama"),
                                 )
                                 emit(combined, False, None, "ollama")
 
@@ -198,12 +205,15 @@ class SearchWorker:
                                 answer_key = item["answer"].casefold().strip()
                                 if answer_key not in seen_answers and len(model_candidates) < self.MAX_CANDIDATES:
                                     seen_answers.add(answer_key)
-                                    model_candidates.append(item)
+                                    model_candidates.append({**item, "origin": "llama"})
                             if len(model_candidates) == previous_count:
                                 break
                             if len(merge_candidates(learned_candidates, dictionary, model_candidates)) >= self.MAX_CANDIDATES:
                                 break
-                            ready_dictionary = dictionary_future.result() if dictionary_future.done() else []
+                            ready_dictionary = (
+                                tagged(dictionary_future.result(), "lexicon")
+                                if dictionary_future.done() else []
+                            )
                             emit(
                                 merge_candidates(learned_candidates, ready_dictionary, model_candidates),
                                 False, None, "ollama",
@@ -214,7 +224,7 @@ class SearchWorker:
                         self._ollama_failure_until = time.monotonic() + self.FAILURE_COOLDOWN_SECONDS
 
                 if not dictionary:
-                    dictionary = dictionary_future.result()
+                    dictionary = tagged(dictionary_future.result(), "lexicon")
                 with self._lock:
                     live_exclusions = set(self._live_exclusions.get(prompt_key, set()))
                 candidates = []

@@ -201,7 +201,10 @@ def main() -> None:
         "dataset_text_field": "text",
         "max_seq_length": MAX_SEQ_LENGTH,
         "max_length": MAX_SEQ_LENGTH,
-        "packing": False,
+        # Most examples are short. Packing keeps every token and EOS boundary
+        # while avoiding padding work inside each 512-token block.
+        "packing": True,
+        "group_by_length": True,
     })
     train_args = SFTConfig(**training_options)
     trainer_options = _supported_kwargs(SFTTrainer, {
