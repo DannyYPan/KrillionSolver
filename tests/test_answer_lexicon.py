@@ -167,6 +167,12 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertNotIn("China", china_border)
         self.assertNotIn("United States", china_border)
 
+        self.assertEqual(local_candidates("Name a country with a monarchy", limit=80), [])
+
+        self.assertEqual(
+            local_candidates("Name a country with an unsupported mystery property", limit=20), [],
+        )
+
     def test_specific_trivia_qualifiers_do_not_use_generic_lists(self):
         self.assertEqual(local_candidates("Name a combat sport", limit=20), [])
         self.assertEqual(
@@ -175,6 +181,26 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertEqual(
             local_candidates("Name an animal that lives in swamps or wetlands", limit=20), [],
         )
+        self.assertEqual(local_candidates("Name an animal that is nocturnal", limit=20), [])
+        self.assertEqual(local_candidates("Name a sport with a ball", limit=20), [])
+        self.assertEqual(local_candidates("Name a red food", limit=20), [])
+
+    def test_later_nouns_and_negated_constraints_do_not_replace_the_subject(self):
+        language = "Name the most widely spoken language of an Asian country"
+        self.assertIsNone(prompt_kind(language))
+        self.assertEqual(local_candidates(language, limit=20), [])
+
+        negated = "Name an adverb that doesnâ€™t end in -ly (like â€œsoonâ€)"
+        self.assertNotEqual(prompt_kind(negated), ("ending", "ly"))
+        self.assertEqual(local_candidates(negated, limit=20), [])
+
+    def test_encoded_curly_quotes_preserve_contains_constraint(self):
+        prompt = "Name an English word containing â€œjectâ€"
+        self.assertEqual(prompt_kind(prompt), ("contains", "ject"))
+        answers = [item["answer"].casefold() for item in local_candidates(prompt, limit=30)]
+        self.assertTrue(answers)
+        self.assertTrue(all("ject" in answer for answer in answers))
+        self.assertNotIn("apple", answers)
 
     def test_interjection_and_filler_word_lists_are_separate(self):
         interjections = [item["answer"] for item in local_candidates("Name an interjection", limit=30)]

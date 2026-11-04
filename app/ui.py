@@ -374,14 +374,22 @@ class KrillionSolverApp(tk.Tk):
             scrollregion=self.ideas_canvas.bbox("all")
         ))
 
-    def _remove_said_answers(self, page_text: str, detected_prompt: str | None) -> None:
+    def _remove_said_answers(
+        self, page_text: str, accepted_text: str,
+        editable_values: list[str], detected_prompt: str | None,
+    ) -> None:
         if not self.current_prompt or normalize_prompt(detected_prompt or "") != normalize_prompt(self.current_prompt):
             return
-        found = find_said_answers(
-            [str(item.get("answer", "")) for item in self.current_candidates],
-            page_text,
-            self.current_prompt,
-        )
+        answers = [str(item.get("answer", "")) for item in self.current_candidates]
+        confirmed = find_said_answers(answers, accepted_text, self.current_prompt)
+        typed = {normalize_prompt(value) for value in editable_values if value.strip()}
+        fallback_answers = [
+            answer for answer in answers
+            if normalize_prompt(answer) not in typed or answer in confirmed
+        ]
+        found = list(dict.fromkeys(
+            confirmed + find_said_answers(fallback_answers, page_text, self.current_prompt)
+        ))
         new_answers = [
             answer for answer in found
             if not any(answer.casefold() == existing.casefold() for existing in self.said_answers)
@@ -466,7 +474,10 @@ class KrillionSolverApp(tk.Tk):
                     pending_search = None
                     self._new_prompt(value)
                 elif kind == "diagnostic":
-                    self._remove_said_answers(value.get("accepted_text", ""), value.get("prompt"))
+                    self._remove_said_answers(
+                        value.get("text", ""), value.get("accepted_text", ""),
+                        value.get("editable_values", []), value.get("prompt"),
+                    )
                     if self.diagnostics.get():
                         self.diag_text.configure(state="normal")
                         self.diag_text.delete("1.0", "end")

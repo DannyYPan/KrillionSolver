@@ -224,7 +224,7 @@ def _requested_subject(prompt: str) -> str:
     if not match:
         return prompt
     return re.split(
-        r"\s+(?:that|which|whose|who|with|without|from|in|on|used|having|"
+        r"\s+(?:that|which|whose|who|with|without|from|in|on|of|used|having|"
         r"ending|starting|containing|including)\b|\s*\(",
         match.group("subject"), maxsplit=1, flags=re.I,
     )[0].strip(" .,:;?!\"'")
@@ -255,8 +255,13 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
     if syllable and re.search(r"\b(?:word|name|something|thing|answer)\b", prompt, re.I):
         raw_count = syllable.group("count").casefold()
         return "syllables", str(_NUMBER_WORDS.get(raw_count, int(raw_count) if raw_count.isdigit() else 0))
-    match = _ENDING.search(prompt)
-    if not match:
+    ending_is_negated = bool(re.search(
+        r"\b(?:doesn[^a-z0-9]{1,8}t|does\s+not|mustn[^a-z0-9]{1,8}t|must\s+not|not)\b"
+        r".{0,30}\b(?:ends?|ending)\s+(?:in|with)\b",
+        prompt, re.I,
+    ))
+    match = None if ending_is_negated else _ENDING.search(prompt)
+    if not match and not ending_is_negated:
         # Curly quotes copied through a mismatched encoding can become several
         # punctuation characters. Ignore that punctuation before the suffix.
         match = re.search(
@@ -278,12 +283,23 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
     match = _COMPOUND.search(prompt)
     if match:
         return "compound", next(value for value in match.groups() if value).casefold()
-    if _COUNTRY.search(prompt):
+    if re.search(r"\b(?:countr(?:y|ies)|nations?|territor(?:y|ies))\b", subject, re.I):
         region = _REGION.search(prompt)
         if region:
             return "country_region", _region_name(region.group(0))
         return "country", ""
     match = _CONTAINS.search(prompt)
+    if not match:
+        constraint = re.search(
+            r"\bwords?\b.*?\b(?:contains?|containing|includes?|including|with|has)\s+(.{1,60})",
+            prompt, re.I,
+        )
+        if constraint:
+            tokens = re.findall(r"[a-z]{1,20}", constraint.group(1).casefold())
+            tokens = [token for token in tokens if token not in {"the", "letter", "letters", "substring"}]
+            if tokens:
+                # Present the same group interface as the compiled patterns.
+                match = re.match(r"([a-z]{1,20})", tokens[0], re.I)
     if match:
         return "contains", match.group(1).casefold()
     if _ENGLISH_WORD.search(prompt):
@@ -337,6 +353,18 @@ def _qualified_countries(prompt: str, category: str, region: str) -> list[str]:
             _REGIONAL_COUNTRIES.get(name, set()) for name in requested_regions
         ))
         eligible = [name for name in eligible if name in allowed]
+    qualifier_present = re.search(
+        r"\b(?:countr(?:y|ies)|nations?)\b\s+(?:that|which|whose|with|without|having|in|on)\b",
+        lowered,
+    )
+    known_qualifier = re.search(
+        r"\b(?:flag|banner|coast|coastal|coastline|shoreline|landlocked|population|island|"
+        r"borders?|bordering|neighbou?rs?|adjacent|europe|asia|africa|north america|south america|oceania|"
+        r"nordic|scandinavia)\b",
+        lowered,
+    )
+    if qualifier_present and not known_qualifier:
+        return []
     return eligible
 
 
@@ -408,6 +436,7 @@ def satisfies_constraint(answer: str, prompt: str) -> bool:
 def _qualified_trivia(prompt: str, category: str) -> list[str]:
     answers = list(_TRIVIA_LISTS.get(category, ()))
     subject = _requested_subject(prompt).casefold()
+    lowered = prompt.casefold()
     simple_subjects = {
         "animal": r"(?:(?:sea|marine|ocean)\s+)?(?:animal|creature)s?",
         "food": r"foods?", "fruit": r"fruits?", "vegetable": r"vegetables?",
@@ -422,11 +451,23 @@ def _qualified_trivia(prompt: str, category: str) -> list[str]:
     expected_subject = simple_subjects.get(category)
     if expected_subject and not re.fullmatch(expected_subject, subject, re.I):
         return []
+    semantic_qualifier = re.search(
+        r"\b(?:that|which|whose|who|with|without|having|used\s+(?:for|to)|"
+        r"found\s+in|lives?\s+in|from)\b",
+        lowered,
+    )
+    if category != "animal" and semantic_qualifier:
+        return []
     if category == "animal":
-        lowered = prompt.casefold()
         # Habitat and other semantic qualifiers need prompt-specific knowledge;
         # a generic animal list would be actively misleading.
         if re.search(r"\b(?:lives?|living|found|habitats?)\b", lowered):
+            return []
+        known_animal_qualifier = bool(
+            re.search(r"\b(?:sea|marine|ocean|fish|bird)\b", lowered)
+            or any(re.search(rf"\b{re.escape(trait)}s?\b", lowered) for trait in _ANIMAL_TRAITS)
+        )
+        if semantic_qualifier and not known_animal_qualifier:
             return []
         if re.search(r"\b(?:sea|marine|ocean)\b", lowered):
             answers = [answer for answer in answers if answer in _SEA_ANIMALS]

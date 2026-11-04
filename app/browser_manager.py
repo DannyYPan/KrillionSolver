@@ -45,6 +45,20 @@ def extract_accepted_text(page: Any) -> str:
         return ""
 
 
+def extract_editable_values(page: Any) -> list[str]:
+    """Return live typed values so they cannot be mistaken for submissions."""
+    try:
+        values = page.evaluate(r"""
+        () => [...document.querySelectorAll(
+          'input, textarea, [contenteditable="true"], [role="textbox"]'
+        )].map((node) => (node.value || node.innerText || node.textContent || '').trim())
+          .filter(Boolean)
+        """)
+        return [str(value) for value in (values or []) if str(value).strip()]
+    except (AttributeError, TypeError, ValueError):
+        return []
+
+
 class BrowserMonitor(threading.Thread):
     def __init__(self, site: str, url: str, events: queue.Queue, interval: float = 1.0) -> None:
         super().__init__(name="browser-monitor", daemon=True)
@@ -71,10 +85,12 @@ class BrowserMonitor(threading.Thread):
                     try:
                         extracted = page.locator("body").inner_text(timeout=2500)
                         accepted_text = extract_accepted_text(page)
+                        editable_values = extract_editable_values(page)
                         detection = detect_prompt(extracted, adapter.key)
                         self.events.put(("diagnostic", {
                             "text": detection.extracted_text,
                             "accepted_text": accepted_text,
+                            "editable_values": editable_values,
                             "prompt": detection.prompt,
                             "method": detection.method,
                             "error": detection.error,

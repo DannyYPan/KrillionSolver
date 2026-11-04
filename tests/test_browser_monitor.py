@@ -18,6 +18,8 @@ class _FakePage:
     def locator(self, _selector):
         return types.SimpleNamespace(inner_text=lambda **_kwargs: "Name an island in the Pacific")
     def evaluate(self, _script):
+        if "input, textarea, [contenteditable" in _script:
+            return []
         return "Alice: Fiji +60 points"
     def is_closed(self): return self.closed
 
