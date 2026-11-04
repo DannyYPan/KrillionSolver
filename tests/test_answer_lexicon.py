@@ -161,6 +161,27 @@ class AnswerLexiconTests(unittest.TestCase):
             self.assertEqual(learned_answers.get_learned("Name a city", ["new york"]), [])
             self.assertFalse(learned_answers.remember("Name a city", "   "))
 
+    def test_saved_answer_is_an_instant_local_candidate_for_any_prompt(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"LOCALAPPDATA": directory}):
+            prompt = "Name a moon of a dwarf planet"
+            self.assertTrue(learned_answers.remember(prompt, "Charon"))
+            candidates = local_candidates(prompt)
+            self.assertEqual(candidates[0], {"answer": "Charon", "confirmed": True})
+            self.assertNotIn(
+                "Charon",
+                [item["answer"] for item in local_candidates(prompt, excluded=["charon"])],
+            )
+
+    def test_saved_answer_precedes_builtin_lexicon_and_deduplicates(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"LOCALAPPDATA": directory}):
+            prompt = "Name an animal with a shell"
+            self.assertTrue(learned_answers.remember(prompt, "Nautilus"))
+            candidates = local_candidates(prompt)
+            answers = [item["answer"] for item in candidates]
+            self.assertEqual(answers[0], "Nautilus")
+            self.assertEqual(sum(answer.casefold() == "nautilus" for answer in answers), 1)
+            self.assertTrue(candidates[0]["confirmed"])
+
 
 if __name__ == "__main__":
     unittest.main()

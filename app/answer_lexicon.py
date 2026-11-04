@@ -308,9 +308,19 @@ def _qualified_trivia(prompt: str, category: str) -> list[str]:
 
 
 def local_candidates(prompt: str, excluded: list[str] | None = None, limit: int = 8) -> list[dict[str, object]]:
+    # Answers previously accepted by the game are the fastest and strongest
+    # local matches. Import here to avoid coupling lexicon initialization to
+    # the feedback store during application startup.
+    from .learned_answers import get_learned
+
+    excluded_keys = {item.casefold().strip() for item in (excluded or [])}
+    learned = [
+        answer for answer in get_learned(prompt, excluded)
+        if answer.casefold().strip() not in excluded_keys
+    ]
     kind = prompt_kind(prompt)
     if not kind:
-        return []
+        return [{"answer": answer, "confirmed": True} for answer in learned[:limit]]
     category, value = kind
     if category == "tv_character":
         answers = list(_TV_CHARACTERS.get(value, ()))[:limit]
@@ -355,9 +365,19 @@ def local_candidates(prompt: str, excluded: list[str] | None = None, limit: int 
         answers = list(_COMMON_ENGLISH_WORDS)[:limit]
         source = "English pronunciation dictionary"
     else:
-        return []
-    excluded_keys = {item.casefold().strip() for item in (excluded or [])}
-    return [
-        {"answer": _DISPLAY_FORMS.get(answer, answer)}
-        for answer in answers if answer.casefold() not in excluded_keys
-    ]
+        answers = []
+
+    combined: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for answer in learned:
+        key = answer.casefold().strip()
+        if key and key not in seen:
+            seen.add(key)
+            combined.append({"answer": answer, "confirmed": True})
+    for answer in answers:
+        displayed = _DISPLAY_FORMS.get(answer, answer)
+        key = displayed.casefold().strip()
+        if key and key not in excluded_keys and key not in seen:
+            seen.add(key)
+            combined.append({"answer": displayed})
+    return combined[:limit]

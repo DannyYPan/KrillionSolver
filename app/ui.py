@@ -318,10 +318,13 @@ class KrillionSolverApp(tk.Tk):
         ]
         if not new_answers:
             return
+        saved_count = sum(remember(self.current_prompt, answer) for answer in new_answers)
         self.said_answers.extend(new_answers)
         self.search_worker.exclude(self.current_prompt, new_answers)
         self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith("Generating"))
-        self.search_status.set(f"Removed {len(new_answers)} already-said answer{'s' if len(new_answers) != 1 else ''}")
+        removed_label = f"Removed {len(new_answers)} already-said answer{'s' if len(new_answers) != 1 else ''}"
+        learned_label = f"saved {saved_count} as correct" if saved_count else "could not save training data"
+        self.search_status.set(f"{removed_label} · {learned_label}")
 
     def _scroll_canvas_under_pointer(self, event) -> tk.Canvas | None:
         widget = self.winfo_containing(event.x_root, event.y_root)

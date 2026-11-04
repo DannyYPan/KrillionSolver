@@ -139,7 +139,7 @@ Alex: Paris
 Alex: Paris +20 points
 ```
 
-If you or another player already submitted an answer during the current round, KrillionSolver removes it and excludes it from later Ollama passes. This is separate from wrong-answer feedback and is not added to the rejected training data.
+If you or another player already submitted an answer during the current round, KrillionSolver removes it and excludes it from later Ollama passes. It also saves that prompt-and-answer pair as correct training data. When the same normalized prompt appears in the future, the learned answer is available immediately from the local lexicon and is ranked before built-in suggestions. Duplicate observations are stored only once. This is separate from wrong-answer feedback and is not added to the rejected training data.
 
 The submitted-answer list resets when:
 
@@ -179,7 +179,7 @@ Feedback is stored outside the repository so reinstalling or updating the projec
 %LOCALAPPDATA%\KrillionSolver\rejected_answers.jsonl
 ```
 
-- `training_examples.jsonl` contains prompt-and-answer pairs confirmed with `✓`.
+- `training_examples.jsonl` contains prompt-and-answer pairs confirmed with `✓` or accepted on the monitored game page.
 - `rejected_answers.jsonl` contains answers rejected with `✕`.
 
 Feedback does not modify the running model immediately. It becomes training data the next time you fine-tune and recreate the Ollama model.
