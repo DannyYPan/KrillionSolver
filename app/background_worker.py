@@ -116,7 +116,8 @@ class SearchWorker:
                 # Large dictionary/syllable data must not delay the first answer.
                 local_exclusions = list(excluded) + list(excluded_answers or []) + historical_rejections
                 dictionary_future = _LEXICON_EXECUTOR.submit(
-                    local_candidates, prompt, local_exclusions, 5, mode=mode_key
+                    local_candidates, prompt, local_exclusions, 5,
+                    mode=mode_key, include_learned=False,
                 )
                 dictionary: list[dict] = []
                 hints: list[str] = []

@@ -481,6 +481,7 @@ def _qualified_trivia(prompt: str, category: str) -> list[str]:
 
 def local_candidates(
     prompt: str, excluded: list[str] | None = None, limit: int = 8, *, mode: str = "Krillion",
+    include_learned: bool = True,
 ) -> list[dict[str, object]]:
     # Answers previously accepted by the game are the fastest and strongest
     # local matches. Import here to avoid coupling lexicon initialization to
@@ -488,10 +489,13 @@ def local_candidates(
     from .learned_answers import get_learned
 
     excluded_keys = {item.casefold().strip() for item in (excluded or [])}
-    learned = [
-        answer for answer in get_learned(prompt, excluded, mode=mode)
-        if answer.casefold().strip() not in excluded_keys
-    ]
+    learned = (
+        [
+            answer for answer in get_learned(prompt, excluded, mode=mode)
+            if answer.casefold().strip() not in excluded_keys
+        ]
+        if include_learned else []
+    )
     kind = prompt_kind(prompt)
     if not kind:
         return [{"answer": answer, "confirmed": True} for answer in learned[:limit]]

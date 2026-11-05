@@ -16,6 +16,7 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/"
 OLLAMA_MODEL = os.environ.get("KRILLION_OLLAMA_MODEL", "llama3.1:latest").strip()
 OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("KRILLION_OLLAMA_TIMEOUT_SECONDS", "60"))
 OLLAMA_KEEP_ALIVE = os.environ.get("KRILLION_OLLAMA_KEEP_ALIVE", "10m").strip()
+OLLAMA_NUM_CTX = max(512, min(8192, int(os.environ.get("KRILLION_OLLAMA_NUM_CTX", "2048"))))
 
 SYSTEM_PROMPT = """You help with fast open-answer trivia. Return concise, directly usable English answers.
 First identify the subject immediately after words such as Name, Give, or List. Answer that subject. Words later in qualifiers, exclusions, purposes, or examples do not change the requested subject.
@@ -185,6 +186,7 @@ def suggest(
         "options": {
             "temperature": 0.08 if fast else (0.2 if prefer_rare else 0.15),
             "num_predict": 20 if fast else 96,
+            "num_ctx": OLLAMA_NUM_CTX,
         },
     }).encode("utf-8")
     request = Request(f"{OLLAMA_HOST}/api/chat", data=body, headers={"Content-Type": "application/json"}, method="POST")

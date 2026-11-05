@@ -162,6 +162,7 @@ $env:KRILLION_OLLAMA_MODEL = "krillionsolver:8b"
 $env:KRILLION_OLLAMA_PASSES = "5"
 $env:KRILLION_OLLAMA_TIMEOUT_SECONDS = "60"
 $env:KRILLION_OLLAMA_KEEP_ALIVE = "10m"
+$env:KRILLION_OLLAMA_NUM_CTX = "2048"
 .\.venv\Scripts\python.exe prompt_assistant.py
 ```
 
@@ -171,6 +172,7 @@ $env:KRILLION_OLLAMA_KEEP_ALIVE = "10m"
 | `KRILLION_OLLAMA_PASSES` | `5` | Generation passes; accepted range is 1 through 8. |
 | `KRILLION_OLLAMA_TIMEOUT_SECONDS` | `60` | Timeout for one Ollama request. |
 | `KRILLION_OLLAMA_KEEP_ALIVE` | `10m` | How long Ollama keeps the model loaded after a request. Use `0` to unload immediately. |
+| `KRILLION_OLLAMA_NUM_CTX` | `2048` | Active Ollama context size. The default matches the fine-tuning context and reduces memory use. |
 
 The batch launcher selects `krillionsolver:8b` or `llama3.1:latest` itself to guarantee an 8B model. Use direct Python launch for another local tag.
 
