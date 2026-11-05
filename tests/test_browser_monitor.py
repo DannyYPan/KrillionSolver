@@ -6,7 +6,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from app.browser_manager import BrowserMonitor, extract_accepted_text
+from app.browser_manager import BrowserMonitor, extract_accepted_text, extract_rejected_text
 
 
 class _FakePage:
@@ -20,6 +20,8 @@ class _FakePage:
     def locator(self, _selector):
         return types.SimpleNamespace(inner_text=lambda **_kwargs: "Name an island in the Pacific")
     def evaluate(self, _script):
+        if "line-through" in _script:
+            return ""
         if "input, textarea, [contenteditable" in _script:
             return []
         return "Alice: Fiji +60 points"
@@ -77,9 +79,11 @@ class BrowserMonitorTests(unittest.TestCase):
                 self.assertIn(("prompt", "Name an island in the Pacific"), observed)
                 diagnostic = next(value for kind, value in observed if kind == "diagnostic")
                 self.assertEqual(diagnostic["accepted_text"], "Alice: Fiji +60 points")
+                self.assertEqual(diagnostic["rejected_text"], "")
 
     def test_accepted_text_gracefully_requires_dom_support(self):
         self.assertEqual(extract_accepted_text(object()), "")
+        self.assertEqual(extract_rejected_text(object()), "")
 
 
 if __name__ == "__main__":

@@ -433,18 +433,32 @@ class KrillionSolverApp(tk.Tk):
         ))
 
     def _remove_said_answers(
-        self, page_text: str, accepted_text: str,
+        self, page_text: str, accepted_text: str, rejected_text: str,
         editable_values: list[str], detected_prompt: str | None,
     ) -> None:
         if not self.current_prompt or normalize_prompt(detected_prompt or "") != normalize_prompt(self.current_prompt):
             return
         answers = [str(item.get("answer", "")) for item in self.current_candidates]
-        confirmed = find_said_answers(answers, accepted_text, self.current_prompt)
+        rejected = find_said_answers(answers, rejected_text, self.current_prompt)
+        new_rejected = [
+            answer for answer in rejected
+            if not any(answer.casefold() == old.casefold() for old in self.rejected_answers)
+        ]
+        for answer in new_rejected:
+            reject_answer(self.current_prompt, answer, mode=self.site.get(), source="game-strikethrough")
+            self.rejected_answers.append(answer)
+        if new_rejected:
+            self.search_worker.exclude(self.current_prompt, new_rejected)
+        rejected_keys = {answer.casefold() for answer in rejected}
+        eligible = [answer for answer in answers if answer.casefold() not in rejected_keys]
+        confirmed = find_said_answers(eligible, accepted_text, self.current_prompt)
         typed = {normalize_prompt(value) for value in editable_values if value.strip()}
         fallback_answers = [
-            answer for answer in answers
+            answer for answer in eligible
             if normalize_prompt(answer) not in typed or answer in confirmed
         ]
+        # Ordinary submitted-answer rows may be learned when they are neither
+        # struck through nor merely present in the live editable field.
         found = list(dict.fromkeys(
             confirmed + find_said_answers(fallback_answers, page_text, self.current_prompt)
         ))
@@ -452,7 +466,7 @@ class KrillionSolverApp(tk.Tk):
             answer for answer in found
             if not any(answer.casefold() == existing.casefold() for existing in self.said_answers)
         ]
-        if not new_answers:
+        if not new_answers and not new_rejected:
             return
         saved_count = sum(
             remember(self.current_prompt, answer, mode=self.site.get(), source="game-page")
@@ -461,9 +475,13 @@ class KrillionSolverApp(tk.Tk):
         self.said_answers.extend(new_answers)
         self.search_worker.exclude(self.current_prompt, new_answers)
         self._render_candidates(self.current_candidates, searching=self.search_status.get().startswith("Generating"))
-        removed_label = f"Removed {len(new_answers)} already-said answer{'s' if len(new_answers) != 1 else ''}"
-        learned_label = f"saved {saved_count} as correct" if saved_count else "could not save training data"
-        self.search_status.set(f"{removed_label} · {learned_label}")
+        status_parts = []
+        if new_answers:
+            status_parts.append(f"Removed {len(new_answers)} already-said answer{'s' if len(new_answers) != 1 else ''}")
+            status_parts.append(f"saved {saved_count} as correct" if saved_count else "could not save training data")
+        if new_rejected:
+            status_parts.append(f"removed and saved {len(new_rejected)} struck answer{'s' if len(new_rejected) != 1 else ''} as wrong")
+        self.search_status.set(" · ".join(status_parts))
 
     def _scroll_canvas_under_pointer(self, event) -> tk.Canvas | None:
         widget = self.winfo_containing(event.x_root, event.y_root)
@@ -534,6 +552,7 @@ class KrillionSolverApp(tk.Tk):
                 elif kind == "diagnostic":
                     self._remove_said_answers(
                         value.get("text", ""), value.get("accepted_text", ""),
+                        value.get("rejected_text", ""),
                         value.get("editable_values", []), value.get("prompt"),
                     )
                     if self.diagnostics.get():

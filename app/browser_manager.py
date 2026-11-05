@@ -17,9 +17,9 @@ _ACCEPTED_TEXT_SCRIPT = r"""
 () => {
   const blocked = 'input, textarea, select, form, [contenteditable="true"], [role="textbox"]';
   const selectors = [
-    '[data-answer]', '[data-testid*="answer" i]', '[data-testid*="result" i]',
-    '[class*="accepted" i]', '[class*="correct" i]', '[class*="answer" i]',
-    '[class*="result" i]', '[id*="accepted" i]', '[id*="answer" i]',
+    '[data-accepted="true"]', '[data-correct="true"]',
+    '[class*="accepted" i]', '[class*="correct" i]',
+    '[id*="accepted" i]', '[id*="correct" i]',
     '[aria-label*="accepted" i]', '[aria-label*="correct" i]'
   ];
   const nodes = new Set(document.querySelectorAll(selectors.join(',')));
@@ -38,11 +38,39 @@ _ACCEPTED_TEXT_SCRIPT = r"""
 }
 """
 
+_REJECTED_TEXT_SCRIPT = r"""
+() => {
+  const blocked = 'input, textarea, select, form, [contenteditable="true"], [role="textbox"]';
+  const explicit = 's, del, [style*="line-through" i], [class*="strike" i]';
+  const nodes = new Set(document.querySelectorAll(explicit));
+  document.querySelectorAll('body *').forEach((node) => {
+    if (node.matches(blocked) || node.closest(blocked)) return;
+    const text = (node.textContent || '').trim();
+    if (!text || text.length > 160) return;
+    const decoration = getComputedStyle(node).textDecorationLine || '';
+    if (decoration.split(/\s+/).includes('line-through')) nodes.add(node);
+  });
+  return [...new Set([...nodes]
+    .filter((node) => !node.matches(blocked) && !node.closest(blocked))
+    .map((node) => (node.innerText || node.textContent || '').trim())
+    .filter((text) => text && text.length <= 160))]
+    .join('\n');
+}
+"""
+
 
 def extract_accepted_text(page: Any) -> str:
     """Read only DOM regions that look like submitted/accepted answer rows."""
     try:
         return str(page.evaluate(_ACCEPTED_TEXT_SCRIPT) or "")
+    except (AttributeError, TypeError, ValueError):
+        return ""
+
+
+def extract_rejected_text(page: Any) -> str:
+    """Read answers the game visually marks with a strikethrough."""
+    try:
+        return str(page.evaluate(_REJECTED_TEXT_SCRIPT) or "")
     except (AttributeError, TypeError, ValueError):
         return ""
 
@@ -94,11 +122,13 @@ class BrowserMonitor(threading.Thread):
                     try:
                         extracted = page.locator("body").inner_text(timeout=2500)
                         accepted_text = extract_accepted_text(page)
+                        rejected_text = extract_rejected_text(page)
                         editable_values = extract_editable_values(page)
                         detection = detect_prompt(extracted, adapter.key)
                         self.events.put(("diagnostic", {
                             "text": detection.extracted_text,
                             "accepted_text": accepted_text,
+                            "rejected_text": rejected_text,
                             "editable_values": editable_values,
                             "prompt": detection.prompt,
                             "method": detection.method,
