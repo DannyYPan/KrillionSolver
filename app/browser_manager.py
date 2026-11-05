@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from .prompt_detector import detect_prompt
@@ -60,7 +62,7 @@ def extract_editable_values(page: Any) -> list[str]:
 
 
 class BrowserMonitor(threading.Thread):
-    def __init__(self, site: str, url: str, events: queue.Queue, interval: float = 1.0) -> None:
+    def __init__(self, site: str, url: str, events: queue.Queue, interval: float = 0.6) -> None:
         super().__init__(name="browser-monitor", daemon=True)
         self.site, self.url, self.events, self.interval = site, url, events, interval
         self._stop_event = threading.Event()
@@ -75,8 +77,15 @@ class BrowserMonitor(threading.Thread):
             adapter = ADAPTERS[self.site]
             self.events.put(("browser", "Starting Chromium…"))
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=False)
-                page = browser.new_page()
+                local_data = Path(os.environ.get(
+                    "LOCALAPPDATA", str(Path.home() / "AppData" / "Local")
+                ))
+                profile_dir = local_data / "KrillionSolver" / "browser-profile"
+                profile_dir.mkdir(parents=True, exist_ok=True)
+                browser = playwright.chromium.launch_persistent_context(
+                    str(profile_dir), headless=False
+                )
+                page = browser.pages[0] if browser.pages else browser.new_page()
                 page.set_default_timeout(2500)
                 page.goto(self.url, wait_until="domcontentloaded", timeout=30000)
                 self.events.put(("browser", f"Open · {page.url}"))

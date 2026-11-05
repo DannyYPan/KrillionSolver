@@ -1,5 +1,7 @@
 import queue
+import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -33,8 +35,14 @@ class BrowserMonitorTests(unittest.TestCase):
             with self.subTest(site=site):
                 page = _FakePage()
                 closed = []
-                browser = types.SimpleNamespace(new_page=lambda: page, close=lambda: closed.append(True))
-                chromium = types.SimpleNamespace(launch=lambda **_kwargs: browser)
+                browser = types.SimpleNamespace(
+                    pages=[page],
+                    new_page=lambda: page,
+                    close=lambda: closed.append(True),
+                )
+                chromium = types.SimpleNamespace(
+                    launch_persistent_context=lambda *_args, **_kwargs: browser
+                )
 
                 class PlaywrightContext:
                     def __init__(self):
@@ -49,7 +57,9 @@ class BrowserMonitorTests(unittest.TestCase):
                     sync_playwright=lambda: PlaywrightContext(),
                 )
                 events = queue.Queue()
-                with patch.dict(sys.modules, {"playwright": types.ModuleType("playwright"), "playwright.sync_api": fake_module}):
+                with tempfile.TemporaryDirectory() as local_data, \
+                     patch.dict(os.environ, {"LOCALAPPDATA": local_data}), \
+                     patch.dict(sys.modules, {"playwright": types.ModuleType("playwright"), "playwright.sync_api": fake_module}):
                     monitor = BrowserMonitor(site, url, events, interval=0.01)
                     monitor.start()
                     observed = []

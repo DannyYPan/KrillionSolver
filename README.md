@@ -2,6 +2,8 @@
 
 KrillionSolver is a Windows desktop companion for **Krillion** and **Puffer Party**. It opens the game in a monitored Chromium window, detects each question, and streams concise answers from a local Llama 3.1 8B model through Ollama.
 
+The monitored browser keeps its own profile in `%LOCALAPPDATA%\KrillionSolver\browser-profile`, so sign-in and browser session data survive restarts. Prompt changes are checked about every 0.6 seconds.
+
 The application uses no web search, cloud AI API, or paid API credits. It never types or submits an answer. You decide which answer to use and copy it into the game.
 
 ## What it does
