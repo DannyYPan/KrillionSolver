@@ -320,15 +320,73 @@ class KrillionSolverApp(tk.Tk):
             # Repeat after Tkinter recalculates the now-empty canvas layout.
             self.after_idle(self._scroll_results_to_top)
 
+    def _add_candidate_row(self, parent: ttk.Frame, number: int, candidate: dict) -> None:
+        """Append one answer while leaving existing visible rows untouched."""
+        card = ttk.Frame(parent, padding=(6, 3), style="Answer.TFrame")
+        card.pack(fill="x", anchor="w", padx=1, pady=1)
+        buttons = ttk.Frame(card, style="Card.TFrame")
+        buttons.pack(side="right", anchor="e")
+        ttk.Button(
+            buttons, text="⧉", width=3, style="Icon.TButton",
+            command=lambda answer=candidate["answer"]: self._copy_answer(answer),
+        ).pack(side="right")
+        ttk.Button(
+            buttons, text="✓", width=3, style="Icon.TButton",
+            command=lambda answer=candidate["answer"]: self._save_confirmed_answer(answer),
+        ).pack(side="right", padx=(0, 4))
+        ttk.Button(
+            buttons, text="✕", width=3, style="Icon.TButton",
+            command=lambda answer=candidate["answer"]: self._reject_answer(answer),
+        ).pack(side="right", padx=(0, 4))
+        saved_mark = "✓ " if candidate.get("confirmed") else ""
+        origin = candidate.get("origin", "lexicon" if candidate.get("confirmed") else "llama")
+        ttk.Label(
+            card, text="●",
+            style="LlamaDot.TLabel" if origin == "llama" else "LexiconDot.TLabel",
+        ).pack(side="left", padx=(0, 3))
+        ttk.Label(
+            card, text=f"{number}. {saved_mark}{candidate['answer']}", style="Answer.TLabel",
+        ).pack(side="left", anchor="w", fill="x", expand=True)
+
     def _render_candidates(self, candidates: list[dict], searching: bool = False) -> None:
         hidden = {answer.casefold() for answer in self.rejected_answers + self.said_answers}
         candidates = [item for item in candidates if item.get("answer", "").casefold() not in hidden]
+        previous = self._rendered_signature or ()
+        previous_keys = [item[0] for item in previous if item and item[0] != "__empty__"]
+        incoming = {
+            str(item.get("answer", "")).casefold(): item for item in candidates
+        }
+        if previous_keys and all(key in incoming for key in previous_keys):
+            # Background sources can finish in a different order. Keep every
+            # displayed row stable and append only genuinely new answers.
+            existing = [incoming[key] for key in previous_keys]
+            old_keys = set(previous_keys)
+            candidates = existing + [
+                item for item in candidates
+                if str(item.get("answer", "")).casefold() not in old_keys
+            ]
         self.current_candidates = list(candidates)
         signature = tuple(
             (str(item.get("answer", "")).casefold(), bool(item.get("confirmed")), item.get("origin"))
             for item in candidates
         ) or (("__empty__", searching),)
         if signature == self._rendered_signature and self.answers_content.winfo_children():
+            return
+        previous = self._rendered_signature or ()
+        if (
+            candidates
+            and previous
+            and previous not in ((("__empty__", True),), (("__empty__", False),))
+            and len(signature) > len(previous)
+            and signature[:len(previous)] == previous
+            and self.answers_content.winfo_children()
+        ):
+            for number, candidate in enumerate(candidates[len(previous):], start=len(previous) + 1):
+                self._add_candidate_row(self.answers_content, number, candidate)
+            self._rendered_signature = signature
+            self.after_idle(lambda: self.ideas_canvas.configure(
+                scrollregion=self.ideas_canvas.bbox("all")
+            ))
             return
         replacement = ttk.Frame(self.ideas_inner, style="Card.TFrame")
         if not candidates:
