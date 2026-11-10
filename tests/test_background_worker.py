@@ -71,7 +71,8 @@ class BackgroundWorkerTests(unittest.TestCase):
         release = threading.Event()
 
         def delayed_suggest(
-            prompt, hints=None, excluded_answers=None, on_update=None, fast=False, prefer_rare=False,
+            prompt, hints=None, excluded_answers=None, on_update=None, fast=False,
+            prefer_rare=False, cancelled=None,
         ):
             entered.set()
             release.wait(timeout=2)

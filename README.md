@@ -1,6 +1,6 @@
 # KrillionSolver
 
-KrillionSolver is a Windows desktop companion for **Krillion** and **Puffer Party**. It opens the game in a monitored Chromium window, detects each question, and streams concise answers from a local Llama 3.1 8B model through Ollama.
+KrillionSolver is a Windows desktop companion for **Krillion** and **Puffer Party**, with optional **Playdaily.org** access for Krillion. It opens the game in a monitored Chromium window, detects each question, and streams concise answers from a local Llama 3.1 8B model through Ollama.
 
 The monitored browser keeps its own profile in `%LOCALAPPDATA%\KrillionSolver\browser-profile`, so sign-in and browser session data survive restarts. Prompt changes are checked about every 0.6 seconds.
 
@@ -19,6 +19,8 @@ The application uses no web search, cloud AI API, or paid API credits. It never 
 - Supports correct and wrong feedback for future fine-tuning.
 - Keeps a structured, mode-specific SQLite history of accepted and rejected answers.
 - Provides local fallback answers when Ollama is unavailable for a supported category.
+- Requests more answers whenever removals leave five or fewer visible choices.
+- Shows whether Ollama is available and whether the configured model is loaded.
 
 ## Requirements
 
@@ -71,7 +73,7 @@ Direct launch expects Ollama to already be running.
 
 1. Open KrillionSolver.
 2. Choose **Krillion** or **Puffer Party**.
-3. Leave the supplied URL unchanged unless the game address has changed.
+3. For Krillion, optionally enable **Use Playdaily.org** in full view. Leave the supplied URL unchanged otherwise.
 4. Press **Start**.
 5. Use the visible Chromium window opened by KrillionSolver to join or begin the game.
 6. When a question appears, confirm that it is shown under **Detected prompt**.
@@ -88,6 +90,8 @@ When the monitored browser opens, KrillionSolver changes to compact view. It is 
 - **Restart** closes and reopens the browser with a clean game session.
 - **Automatic answers** generates answers whenever a new prompt is detected.
 - **Diagnostics** shows the URL, extracted page text, selected prompt, detection method, and browser errors.
+- **Use Playdaily.org** opens Playdaily's Krillion page. It appears only for Krillion in full view and uses a separate browser profile and prompt detector.
+- **Ollama status** reports whether the local service and configured model are available.
 
 ### Answer controls
 
@@ -162,7 +166,7 @@ $env:KRILLION_OLLAMA_MODEL = "krillionsolver:8b"
 $env:KRILLION_OLLAMA_PASSES = "5"
 $env:KRILLION_OLLAMA_TIMEOUT_SECONDS = "60"
 $env:KRILLION_OLLAMA_KEEP_ALIVE = "10m"
-$env:KRILLION_OLLAMA_NUM_CTX = "2048"
+$env:KRILLION_OLLAMA_NUM_CTX = "1024"
 .\.venv\Scripts\python.exe prompt_assistant.py
 ```
 
@@ -172,7 +176,7 @@ $env:KRILLION_OLLAMA_NUM_CTX = "2048"
 | `KRILLION_OLLAMA_PASSES` | `5` | Generation passes; accepted range is 1 through 8. |
 | `KRILLION_OLLAMA_TIMEOUT_SECONDS` | `60` | Timeout for one Ollama request. |
 | `KRILLION_OLLAMA_KEEP_ALIVE` | `10m` | How long Ollama keeps the model loaded after a request. Use `0` to unload immediately. |
-| `KRILLION_OLLAMA_NUM_CTX` | `2048` | Active Ollama context size. The default matches the fine-tuning context and reduces memory use. |
+| `KRILLION_OLLAMA_NUM_CTX` | `1024` | Active Ollama context size. The smaller runtime context improves generation speed for these short prompts. |
 
 The batch launcher selects `krillionsolver:8b` or `llama3.1:latest` itself to guarantee an 8B model. Use direct Python launch for another local tag.
 

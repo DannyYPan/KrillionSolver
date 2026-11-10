@@ -1,6 +1,6 @@
 import unittest
 
-from app.prompt_detector import detect_prompt, find_said_answers, normalize_prompt
+from app.prompt_detector import detect_prompt, find_no_echo_answers, find_said_answers, normalize_prompt
 
 
 class PromptDetectionTests(unittest.TestCase):
@@ -41,6 +41,10 @@ class PromptDetectionTests(unittest.TestCase):
         page = "Name a city — Paris doesn't count\nAlex: London +20 points\n2. Tokyo\nSubmit"
         found = find_said_answers(["Paris", "London", "Tokyo", "Rome"], page, "Name a city — Paris doesn't count")
         self.assertEqual(found, ["London", "Tokyo"])
+
+    def test_finds_confirmed_no_echo_rejection_message(self):
+        page = '"PARIS": No EcHo.'
+        self.assertEqual(find_no_echo_answers(["Paris", "London"], page), ["Paris"])
 
 
 if __name__ == "__main__":

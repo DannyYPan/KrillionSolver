@@ -44,11 +44,11 @@ _COUNTRY = re.compile(
 )
 _REGION = re.compile(r"\b(?:european|asian|african|north american|south american|oceanian|nordic|scandinavian|in europe|in asia|in africa|in north america|in south america|in oceania|in scandinavia)\b", re.I)
 _FLAG_COLORS = {
-    "red": "Canada|China|France|Germany|India|Indonesia|Italy|Japan|Mexico|Netherlands|Norway|Poland|Portugal|Russia|Spain|Switzerland|Turkey|United Kingdom|United States|Vietnam",
+    "red": "Canada|China|France|Germany|Indonesia|Italy|Japan|Mexico|Netherlands|Norway|Poland|Portugal|Russia|Spain|Switzerland|Turkey|United Kingdom|United States|Vietnam",
     "blue": "Argentina|Australia|Brazil|France|Greece|India|Israel|Netherlands|New Zealand|Russia|Sweden|United Kingdom|United States",
     "white": "Canada|Finland|France|Greece|India|Indonesia|Israel|Italy|Japan|Mexico|Netherlands|Poland|Russia|Switzerland|United Kingdom|United States",
     "green": "Brazil|India|Ireland|Italy|Mexico|Nigeria|Pakistan|Saudi Arabia|South Africa|Portugal",
-    "yellow": "Brazil|China|Germany|India|Spain|Sweden|Ukraine|Vietnam",
+    "yellow": "Brazil|China|Germany|Spain|Sweden|Ukraine|Vietnam",
     "black": "Belgium|Germany|Jamaica|South Africa",
 }
 _EXACT_FLAG_COLORS = {
@@ -74,7 +74,7 @@ _FLAG_SYMBOLS = {
     "crescent": set("Algeria|Azerbaijan|Libya|Malaysia|Maldives|Mauritania|Pakistan|Singapore|Tunisia|Turkey|Turkmenistan|Uzbekistan".split("|")),
 }
 _LANDLOCKED = set("Afghanistan|Armenia|Austria|Azerbaijan|Belarus|Bhutan|Bolivia|Botswana|Burkina Faso|Burundi|Central African Republic|Chad|Czechia|Eswatini|Ethiopia|Hungary|Kazakhstan|Kyrgyzstan|Laos|Lesotho|Liechtenstein|Luxembourg|Malawi|Mali|Moldova|Mongolia|Nepal|Niger|North Macedonia|Paraguay|Rwanda|San Marino|Serbia|Slovakia|South Sudan|Switzerland|Tajikistan|Turkmenistan|Uganda|Uzbekistan|Vatican City|Zambia|Zimbabwe".split("|"))
-_SMALL_POPULATION = set("Andorra|Antigua and Barbuda|Dominica|Kiribati|Liechtenstein|Marshall Islands|Monaco|Nauru|Palau|Saint Kitts and Nevis|San Marino|Seychelles|Tuvalu|Vatican City".split("|"))
+_SMALL_POPULATION = set("Andorra|Antigua and Barbuda|Dominica|Liechtenstein|Marshall Islands|Monaco|Nauru|Palau|Saint Kitts and Nevis|San Marino|Tuvalu|Vatican City".split("|"))
 _ISLAND_COUNTRIES = set("Antigua and Barbuda|Australia|Bahamas|Bahrain|Barbados|Brunei|Cabo Verde|Comoros|Cuba|Cyprus|Dominica|Dominican Republic|Fiji|Grenada|Haiti|Iceland|Indonesia|Ireland|Jamaica|Japan|Kiribati|Madagascar|Maldives|Malta|Marshall Islands|Mauritius|Micronesia|Nauru|New Zealand|Palau|Papua New Guinea|Philippines|Saint Kitts and Nevis|Saint Lucia|Saint Vincent and the Grenadines|Samoa|Seychelles|Singapore|Solomon Islands|Sri Lanka|Taiwan|Timor-Leste|Tonga|Trinidad and Tobago|Tuvalu|United Kingdom|Vanuatu".split("|"))
 _COUNTRY_BORDERS = {
     "china": set("Afghanistan|Bhutan|India|Kazakhstan|North Korea|Kyrgyzstan|Laos|Mongolia|Myanmar|Nepal|Pakistan|Russia|Tajikistan|Vietnam".split("|")),
@@ -112,7 +112,7 @@ _SITCOMS = (
     "Schitt's Creek", "It's Always Sunny in Philadelphia", "New Girl",
     "Scrubs", "Malcolm in the Middle", "Everybody Hates Chris", "Black-ish",
     "The IT Crowd", "Kim's Convenience", "Derry Girls", "Party Down",
-    "What We Do in the Shadows", "Ghosts", "Freaks and Geeks", "Veep",
+    "What We Do in the Shadows", "Ghosts", "Veep",
     "Silicon Valley", "Unbreakable Kimmy Schmidt", "Happy Endings",
     "Fresh Off the Boat", "My Name Is Earl", "The Middle", "Mom",
     "How I Met Your Mother", "Friends", "The Big Bang Theory",
@@ -178,12 +178,29 @@ _DISPLAY_FORMS = {"foodtruck": "food truck", "busstop": "bus stop"}
 
 
 @lru_cache(maxsize=1)
-def _words() -> set[str]:
+def _word_list() -> tuple[str, ...]:
+    """Return a compact, frequency-ranked general English vocabulary.
+
+    CMUdict is a pronunciation resource and contains many names, abbreviations,
+    specialist terms, and generated-looking entries.  Wordfreq's most common
+    English words are a better fit for game answers and make constraint scans
+    considerably smaller.  CMUdict remains available to `_syllable_counts`.
+    """
     try:
-        import cmudict
-        return {word.casefold() for word in cmudict.words() if word.isalpha() and 2 <= len(word) <= 24} | _FALLBACK_WORDS
+        from wordfreq import top_n_list
+
+        common = [
+            word.casefold() for word in top_n_list("en", 30_000, wordlist="best")
+            if word.isascii() and word.isalpha() and 2 <= len(word) <= 24
+        ]
+        return tuple(dict.fromkeys(common + sorted(_FALLBACK_WORDS)))
     except (ImportError, OSError):
-        return set(_FALLBACK_WORDS)
+        return tuple(sorted(_FALLBACK_WORDS, key=lambda word: (len(word), word)))
+
+
+@lru_cache(maxsize=1)
+def _words() -> set[str]:
+    return set(_word_list())
 
 
 @lru_cache(maxsize=1)
@@ -191,10 +208,11 @@ def _syllable_counts() -> dict[str, set[int]]:
     """Load pronunciation-based syllable counts once for fast prompt checks."""
     try:
         import cmudict
+        allowed_words = _words()
         counts: dict[str, set[int]] = {}
         for word, pronunciations in cmudict.dict().items():
             clean = _dictionary_form(word)
-            if not clean:
+            if not clean or clean not in allowed_words:
                 continue
             counts[clean] = {
                 sum(bool(re.search(r"\d", phoneme)) for phoneme in pronunciation)
@@ -203,6 +221,12 @@ def _syllable_counts() -> dict[str, set[int]]:
         return counts
     except (AttributeError, ImportError, OSError):
         return {}
+
+
+def warm_local_data() -> None:
+    """Load local word and pronunciation data before the first game prompt."""
+    _word_list()
+    _syllable_counts()
 
 
 def _country_name(value: str) -> bool:
@@ -255,6 +279,17 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
     if syllable and re.search(r"\b(?:word|name|something|thing|answer)\b", prompt, re.I):
         raw_count = syllable.group("count").casefold()
         return "syllables", str(_NUMBER_WORDS.get(raw_count, int(raw_count) if raw_count.isdigit() else 0))
+    # Keep the requested category authoritative. Letter constraints on a
+    # country prompt filter countries; they must not turn it into a generic
+    # pronunciation-dictionary lookup.
+    if re.search(r"\b(?:countr(?:y|ies)|nations?|territor(?:y|ies))\b", subject, re.I):
+        region = _REGION.search(prompt)
+        if region:
+            return "country_region", _region_name(region.group(0))
+        return "country", ""
+    if (re.search(r"\b(?:double|repeated)\s+letter\b", prompt, re.I)
+            and re.search(r"\bword\b", subject, re.I)):
+        return "english_word", ""
     ending_is_negated = bool(re.search(
         r"\b(?:doesn[^a-z0-9]{1,8}t|does\s+not|mustn[^a-z0-9]{1,8}t|must\s+not|not)\b"
         r".{0,30}\b(?:ends?|ending)\s+(?:in|with)\b",
@@ -283,11 +318,6 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
     match = _COMPOUND.search(prompt)
     if match:
         return "compound", next(value for value in match.groups() if value).casefold()
-    if re.search(r"\b(?:countr(?:y|ies)|nations?|territor(?:y|ies))\b", subject, re.I):
-        region = _REGION.search(prompt)
-        if region:
-            return "country_region", _region_name(region.group(0))
-        return "country", ""
     match = _CONTAINS.search(prompt)
     if not match:
         constraint = re.search(
@@ -310,6 +340,18 @@ def prompt_kind(prompt: str) -> tuple[str, str] | None:
 def _qualified_countries(prompt: str, category: str, region: str) -> list[str]:
     eligible = list(_COUNTRIES)
     lowered = prompt.casefold()
+    starting = _STARTING.search(prompt)
+    ending = _ENDING.search(prompt)
+    containing = _CONTAINS.search(prompt)
+    if starting:
+        prefix = starting.group(1).casefold().lstrip("-")
+        eligible = [name for name in eligible if name.casefold().startswith(prefix)]
+    if ending:
+        suffix = ending.group(1).casefold().lstrip("-")
+        eligible = [name for name in eligible if name.casefold().endswith(suffix)]
+    if containing:
+        fragment = containing.group(1).casefold().lstrip("-")
+        eligible = [name for name in eligible if fragment in name.casefold()]
     if re.search(r"\bterritor(?:y|ies)\b", lowered):
         eligible.extend(name for name in _TERRITORIES if name not in eligible)
     if re.search(r"\bisland\s+(?:country|nation)|(?:country|nation)\s+(?:that\s+)?is\s+an?\s+island\b", lowered):
@@ -359,7 +401,8 @@ def _qualified_countries(prompt: str, category: str, region: str) -> list[str]:
     )
     known_qualifier = re.search(
         r"\b(?:flag|banner|coast|coastal|coastline|shoreline|landlocked|population|island|"
-        r"borders?|bordering|neighbou?rs?|adjacent|europe|asia|africa|north america|south america|oceania|"
+        r"borders?|bordering|neighbou?rs?|adjacent|start(?:s|ing)?|begin(?:s|ning)?|"
+        r"ends?|ending|contains?|containing|europe|asia|africa|north america|south america|oceania|"
         r"nordic|scandinavia)\b",
         lowered,
     )
@@ -415,6 +458,12 @@ def candidate_check(answer: str, prompt: str) -> str:
         lexicon = _words()
         if not word or value not in word or word == value:
             return "reject"
+        # A broad dictionary cannot prove compounds by arbitrary splitting:
+        # "sunny" could otherwise become "sun" + "ny", and "stopping"
+        # could become "stop" + "ping". Positively confirm only the curated
+        # compounds; unfamiliar model answers remain uncertain and visible.
+        if word not in _FALLBACK_WORDS:
+            return "uncertain"
         for start in (match.start() for match in re.finditer(re.escape(value), word)):
             end = start + len(value)
             left, right = word[:start], word[end:]
@@ -422,6 +471,11 @@ def candidate_check(answer: str, prompt: str) -> str:
                 return "match"
         return "uncertain"
     if category == "english_word":
+        word = _dictionary_form(answer)
+        if re.search(r"\b(?:double|repeated)\s+letter\b", prompt, re.I):
+            if not re.search(r"([a-z])\1$", word):
+                return "reject"
+            return "match" if word in _words() else "uncertain"
         # Avoid loading the full CMU dictionary for an unconstrained prompt.
         # Unknown model answers remain available rather than becoming false negatives.
         return "match" if _dictionary_form(answer) in _FALLBACK_WORDS else "uncertain"
@@ -511,28 +565,28 @@ def local_candidates(
         source = "Local general-knowledge list"
     elif category == "syllables":
         target = int(value)
-        answers = sorted(
-            (word for word, counts in _syllable_counts().items() if target in counts and 3 <= len(word) <= 18),
-            key=lambda word: (len(word), word),
-        )[:limit]
-        source = "CMU pronunciation dictionary"
+        counts = _syllable_counts()
+        answers = [
+            word for word in _word_list()
+            if target in counts.get(word, ()) and 3 <= len(word) <= 18
+        ][:limit]
+        source = "General English word list"
     elif category == "ending":
-        candidates = [word for word in _words() if word.endswith(value) and len(word) > len(value)]
-        # Prefer compact familiar-looking entries; this is a display ordering, not a frequency claim.
-        answers = sorted(candidates, key=lambda word: (len(word), word))[:limit]
-        source = "CMU pronunciation dictionary"
+        answers = [word for word in _word_list() if word.endswith(value) and len(word) > len(value)][:limit]
+        source = "General English word list"
     elif category == "starting":
-        candidates = [word for word in _words() if word.startswith(value) and len(word) > len(value)]
-        answers = sorted(candidates, key=lambda word: (len(word), word))[:limit]
-        source = "CMU pronunciation dictionary"
+        answers = [word for word in _word_list() if word.startswith(value) and len(word) > len(value)][:limit]
+        source = "General English word list"
     elif category == "contains":
-        candidates = [word for word in _words() if value in word and word != value]
-        answers = sorted(candidates, key=lambda word: (len(word), word))[:limit]
-        source = "CMU pronunciation dictionary"
+        answers = [word for word in _word_list() if value in word and word != value][:limit]
+        source = "General English word list"
     elif category == "compound":
         words = _words()
-        candidates = [word for word in words if value in word and len(word) > len(value) and satisfies_constraint(word, prompt)]
-        answers = sorted(candidates, key=lambda word: (len(word), word))[:limit]
+        answers = [
+            word for word in sorted(_FALLBACK_WORDS, key=lambda item: (len(item), item))
+            if word in words and value in word and len(word) > len(value)
+            and satisfies_constraint(word, prompt)
+        ][:limit]
         source = "Dictionary word and component match"
     elif category in {"country", "country_region"}:
         country_source = _qualified_countries(prompt, category, value)
@@ -540,8 +594,11 @@ def local_candidates(
         answers = sorted(country_source, key=lambda name: (priority.get(name, len(priority)), name))[:limit]
         source = "Local country list"
     elif category == "english_word":
-        answers = list(_COMMON_ENGLISH_WORDS)[:limit]
-        source = "English pronunciation dictionary"
+        if re.search(r"\b(?:double|repeated)\s+letter\b", prompt, re.I):
+            answers = [word for word in _word_list() if re.search(r"([a-z])\1$", word)][:limit]
+        else:
+            answers = list(_COMMON_ENGLISH_WORDS)[:limit]
+        source = "General English word list"
     else:
         answers = []
 

@@ -6,11 +6,111 @@ import types
 import unittest
 from unittest.mock import patch
 
-from app.answer_lexicon import _syllable_counts, _words, candidate_check, local_candidates, prompt_kind, satisfies_constraint
+from app.answer_lexicon import (
+    _syllable_counts, _word_list, _words, candidate_check, local_candidates,
+    prompt_kind, satisfies_constraint,
+)
 from app import learned_answers
 
 
 class AnswerLexiconTests(unittest.TestCase):
+    def test_one_thousand_dictionary_constraint_cases(self):
+        """Exercise real dictionary entries without relying on hand-picked words."""
+        words = [word for word in _word_list() if len(word) >= 4][:1000]
+        self.assertEqual(len(words), 1000)
+        for index, word in enumerate(words):
+            # Cycle through all three spelling rules while keeping each case
+            # deterministic and guaranteed to describe the selected word.
+            rule = index % 3
+            if rule == 0:
+                fragment = word[-2:]
+                prompt = f"Name an English word ending in -{fragment}"
+                broken = word + "x"
+            elif rule == 1:
+                fragment = word[:2]
+                prompt = f"Name an English word starting with {fragment}"
+                broken = "zz" + word[2:]
+            else:
+                start = max(0, (len(word) - 2) // 2)
+                fragment = word[start:start + 2]
+                prompt = f"Name an English word containing {fragment}"
+                broken = word.replace(fragment, "zz")
+            with self.subTest(case=index, word=word, prompt=prompt):
+                self.assertEqual(candidate_check(word, prompt), "match")
+                self.assertEqual(candidate_check(broken, prompt), "reject")
+
+    def test_previous_wrong_answer_regressions(self):
+        """Keep failures observed in the game from returning via broad lists."""
+        cases = (
+            ("Name an animal with a shell", {"ab", "ac", "ad", "dog"}),
+            ("Name a sea animal that isn't a fish or a bird", {"kangaroo", "giraffe", "zebra", "tiger"}),
+            ("Name an item used for eating or serving food (like a plate or spoon)", {"pizza", "sushi", "curry"}),
+            ("Name a Scandinavian or Nordic country or territory", {"united states", "canada", "china", "india"}),
+            ("Name a combat sport", {"soccer", "basketball", "baseball", "tennis"}),
+            ("Name an island country", {"united states", "canada", "china", "india"}),
+            ("Name a country that borders China", {"united states", "canada", "china", "brazil"}),
+            ("Name the most widely spoken language of an Asian country", {"china", "india", "japan"}),
+            ("Name an English word containing ject", {"apple", "bridge", "candle", "dragon"}),
+            ("Name a country with a monarchy", {"united states", "china", "india", "brazil"}),
+            ("Name a country whose name starts with S", {"sa", "se", "sh", "si"}),
+            ("Name an English word ending in a double letter", {"ba", "ca", "da", "ga", "ha"}),
+            ("Name an English word containing fire", {"safire"}),
+            ("Name an English word ending in -less", {"kless", "gless"}),
+        )
+        for prompt, forbidden in cases:
+            with self.subTest(prompt=prompt):
+                answers = {
+                    item["answer"].casefold()
+                    for item in local_candidates(prompt, limit=80)
+                }
+                self.assertTrue(answers.isdisjoint(forbidden), answers & forbidden)
+
+    def test_previous_round_specific_rejections_use_exact_exclusions(self):
+        """Valid English words rejected by one round remain dictionary words."""
+        cases = (
+            ("Name an English word containing atch", "batch"),
+            ("Name an English word containing fire", "fired"),
+            ("Name an English word ending in -ling", "goblin"),
+        )
+        for prompt, rejected in cases:
+            with self.subTest(prompt=prompt, rejected=rejected):
+                answers = local_candidates(prompt, excluded=[rejected], limit=80)
+                self.assertNotIn(rejected, [item["answer"].casefold() for item in answers])
+
+    def test_general_english_dictionary_is_compact_and_clean(self):
+        words = _words()
+        self.assertGreater(len(words), 20_000)
+        self.assertLess(len(words), 35_000)
+        for common in ("apple", "goblin", "prototype", "careless", "firefighter"):
+            self.assertIn(common, words)
+        for noisy in ("kless", "gless", "safire", "lymphadenopathy"):
+            self.assertNotIn(noisy, words)
+
+    def test_general_dictionary_preserves_frequency_order(self):
+        words = _word_list()
+        self.assertEqual(len(words), len(set(words)))
+        self.assertLess(words.index("watch"), words.index("watching"))
+        answers = [
+            item["answer"] for item in local_candidates(
+                "Name an English word containing atch", limit=8,
+            )
+        ]
+        self.assertEqual(answers[:4], ["watch", "match", "watching", "catch"])
+
+    def test_dictionary_constraints_and_exclusions_are_applied(self):
+        cases = {
+            "Name an English word ending in -less": lambda word: word.endswith("less"),
+            "Name an English word starting with proto": lambda word: word.startswith("proto"),
+            "Name an English word containing fire": lambda word: "fire" in word,
+        }
+        for prompt, matches in cases.items():
+            with self.subTest(prompt=prompt):
+                answers = [item["answer"] for item in local_candidates(prompt, limit=12)]
+                self.assertTrue(answers)
+                self.assertTrue(all(matches(answer.casefold()) for answer in answers))
+                excluded = local_candidates(prompt, excluded=[answers[0].upper()], limit=12)
+                self.assertNotIn(answers[0].casefold(), [item["answer"].casefold() for item in excluded])
+
     def test_ending_prompt_returns_dictionary_words_matching_suffix(self):
         fake = types.SimpleNamespace(words=lambda: ["cat", "hat", "dog", "what"])
         _words.cache_clear()
@@ -86,6 +186,20 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertTrue(satisfies_constraint("France", "Name a European country"))
         self.assertEqual(prompt_kind("Name a European country")[0], "country_region")
         self.assertTrue(local_candidates("Name a European country"))
+
+    def test_country_letter_constraint_keeps_country_as_subject(self):
+        answers = [
+            item["answer"] for item in local_candidates(
+                "Name a country whose name starts with S", limit=30,
+            )
+        ]
+        self.assertIn("Sweden", answers)
+        self.assertTrue(all(answer.casefold().startswith("s") for answer in answers))
+
+    def test_double_letter_word_requires_an_actual_repeated_ending(self):
+        prompt = "Name an English word ending in a double letter"
+        self.assertEqual(candidate_check("ba", prompt), "reject")
+        self.assertEqual(candidate_check("class", prompt), "match")
 
     def test_tv_character_prompts_and_show_aliases(self):
         himym = local_candidates("Name a character from How I Met Ur Mother")
@@ -231,7 +345,24 @@ class AnswerLexiconTests(unittest.TestCase):
         self.assertFalse(satisfies_constraint("Canada", "Name a country without a coastline"))
         populated = local_candidates("Name a country with a population over 100,000")
         self.assertIn("Canada", [item["answer"] for item in populated])
+        populated_all = [
+            item["answer"] for item in local_candidates(
+                "Name a country with a population over 100,000", limit=250,
+            )
+        ]
+        self.assertIn("Kiribati", populated_all)
+        self.assertIn("Seychelles", populated_all)
         self.assertFalse(satisfies_constraint("Monaco", "Name a country with a population over 100,000"))
+
+    def test_indian_flag_does_not_match_red_or_yellow(self):
+        self.assertNotIn(
+            "India",
+            [item["answer"] for item in local_candidates("Name a country with red in its flag", limit=250)],
+        )
+        self.assertNotIn(
+            "India",
+            [item["answer"] for item in local_candidates("Name a country with yellow in its flag", limit=250)],
+        )
 
     def test_user_confirmed_answers_persist_and_deduplicate(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"LOCALAPPDATA": directory}):

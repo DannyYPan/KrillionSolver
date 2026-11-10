@@ -76,6 +76,22 @@ def find_said_answers(answers: list[str], extracted_text: str, prompt: str = "")
     return found
 
 
+def find_no_echo_answers(answers: list[str], extracted_text: str) -> list[str]:
+    """Find Krillion's explicit ``\"answer\": no echo`` rejection message."""
+    text = unicodedata.normalize("NFKC", extracted_text).casefold()
+    found: list[str] = []
+    for answer in answers:
+        clean = " ".join(answer.split()).casefold()
+        if not clean:
+            continue
+        pattern = re.compile(
+            rf"[\"“”']\s*{re.escape(clean)}\s*[\"“”']\s*:\s*no\s+echo\b",
+        )
+        if pattern.search(text):
+            found.append(answer)
+    return found
+
+
 def detect_prompt(extracted_text: str, site: str = "krillion") -> Detection:
     """Select a likely standalone prompt line; keep diagnostics when no match exists.
 

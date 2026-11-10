@@ -29,6 +29,12 @@ class OllamaProviderTests(unittest.TestCase):
     def test_fast_pass_rejects_fragments_and_page_title_text(self):
         prompt = "Name an animal with a shell"
         self.assertEqual(parse_suggestions("SAFE: ab", prompt, check_local=False), [])
+        self.assertEqual(
+            parse_suggestions(
+                "SAFE: ba", "Name an English word ending in a double letter", check_local=False,
+            ),
+            [],
+        )
         self.assertEqual(parse_suggestions("SAFE: Top listeners this month", prompt, check_local=False), [])
         self.assertEqual(parse_suggestions("SAFE: What", prompt, check_local=False), [])
         self.assertEqual(

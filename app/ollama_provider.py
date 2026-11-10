@@ -11,12 +11,13 @@ from urllib.request import Request, urlopen
 
 from .answer_lexicon import candidate_check, prompt_kind
 from .prompt_constraints import split_prompt_exclusions
+from .prompt_detector import normalize_prompt
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("KRILLION_OLLAMA_MODEL", "llama3.1:latest").strip()
 OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("KRILLION_OLLAMA_TIMEOUT_SECONDS", "60"))
 OLLAMA_KEEP_ALIVE = os.environ.get("KRILLION_OLLAMA_KEEP_ALIVE", "10m").strip()
-OLLAMA_NUM_CTX = max(512, min(8192, int(os.environ.get("KRILLION_OLLAMA_NUM_CTX", "2048"))))
+OLLAMA_NUM_CTX = max(512, min(8192, int(os.environ.get("KRILLION_OLLAMA_NUM_CTX", "1024"))))
 
 SYSTEM_PROMPT = """You help with fast open-answer trivia. Return concise, directly usable English answers.
 First identify the subject immediately after words such as Name, Give, or List. Answer that subject. Words later in qualifiers, exclusions, purposes, or examples do not change the requested subject.
@@ -47,7 +48,12 @@ def _looks_like_answer(answer: str, prompt: str, *, fast: bool) -> bool:
         return False
     # The speed pass previously leaked fragments such as "ab" and "ad".
     # Later checked passes may still return real short titles such as "Up".
-    if fast and len(letters) < 3 and not re.search(r"\b(?:letter|symbol|chemical element)\b", prompt, re.I):
+    short_answer_requested = re.search(
+        r"\b(?:name|give|list)\s+(?:me\s+)?(?:a|an|the|one)?\s*"
+        r"(?:single\s+)?(?:letter|symbol|chemical element)\b",
+        prompt, re.I,
+    )
+    if fast and len(letters) < 3 and not short_answer_requested:
         return False
     return True
 
@@ -73,6 +79,11 @@ def _parts(text: str) -> list[str]:
     return [re.sub(r"^[\s\d.)*-]+|[\s.;]+$", "", part).strip() for part in re.split(r",|\n", text) if part.strip()]
 
 
+def _answer_key(value: str) -> str:
+    """Return one lowercase comparison key without changing displayed text."""
+    return re.sub(r"\W+", " ", normalize_prompt(value)).strip()
+
+
 def parse_suggestions(
     text: str, prompt: str, excluded_answers: list[str] | None = None,
     check_local: bool = True,
@@ -80,8 +91,8 @@ def parse_suggestions(
     if not text or re.search(r"\bUNCERTAIN\b", text, re.I):
         return []
     core, excluded = split_prompt_exclusions(prompt)
-    excluded_keys = {item.casefold().strip() for item in excluded}
-    excluded_keys.update(item.casefold().strip() for item in (excluded_answers or []))
+    excluded_keys = {_answer_key(item) for item in excluded}
+    excluded_keys.update(_answer_key(item) for item in (excluded_answers or []))
     lines = {}
     for line in text.splitlines():
         match = re.match(r"\s*(SAFE|MORE OPTIONS)\s*:\s*(.*?)\s*$", line, re.I)
@@ -120,7 +131,7 @@ def parse_suggestions(
         "ending", "starting", "contains", "compound", "english_word", "syllables",
     })
     for answer in ordered:
-        key = re.sub(r"\W+", " ", answer.casefold()).strip()
+        key = _answer_key(answer)
         if not key or key in seen or key in excluded_keys:
             continue
         if not _looks_like_answer(answer, core, fast=not check_local):
@@ -149,8 +160,9 @@ def suggest(
     on_update: Callable[[list[dict[str, object]]], None] | None = None,
     fast: bool = False,
     prefer_rare: bool = False,
+    cancelled: Callable[[], bool] | None = None,
 ) -> list[dict[str, object]]:
-    if not OLLAMA_MODEL:
+    if not OLLAMA_MODEL or (cancelled and cancelled()):
         return []
     body = json.dumps({
         "model": OLLAMA_MODEL,
@@ -185,7 +197,7 @@ def suggest(
         ],
         "options": {
             "temperature": 0.08 if fast else (0.2 if prefer_rare else 0.15),
-            "num_predict": 20 if fast else 96,
+            "num_predict": 16 if fast else 64,
             "num_ctx": OLLAMA_NUM_CTX,
         },
     }).encode("utf-8")
@@ -195,6 +207,10 @@ def suggest(
             accumulated = ""
             last_answers: tuple[str, ...] = ()
             for raw_line in response:
+                # Closing a streaming request tells Ollama to stop wasting CPU on
+                # an answer for a question that is no longer active.
+                if cancelled and cancelled():
+                    return []
                 if not raw_line.strip():
                     continue
                 payload = json.loads(raw_line.decode("utf-8"))
@@ -208,10 +224,12 @@ def suggest(
                     elif re.match(r"\s*MORE OPTIONS\s*:", line, re.I) and "," in line:
                         stable_lines.append(line.rsplit(",", 1)[0] + "\n")
                 partial = parse_suggestions("".join(stable_lines), prompt, excluded_answers, check_local=not fast)
-                answers = tuple(str(item["answer"]) for item in partial)
+                answers = tuple(_answer_key(str(item["answer"])) for item in partial)
                 if answers != last_answers and on_update and partial:
                     on_update(partial)
                     last_answers = answers
+            if cancelled and cancelled():
+                return []
             final_candidates = parse_suggestions(accumulated, prompt, excluded_answers, check_local=not fast)
             if on_update and final_candidates:
                 on_update(final_candidates)

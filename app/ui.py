@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import queue
+import json
+import threading
 import tkinter as tk
 from tkinter import ttk
+from urllib.request import Request, urlopen
 
 from .background_worker import SearchWorker, result_is_current
 from .browser_manager import BrowserMonitor
-from .prompt_detector import find_said_answers, normalize_prompt
+from .ollama_provider import OLLAMA_HOST, OLLAMA_MODEL
+from .playdaily_monitor import PLAYDAILY_URL, PlaydailyMonitor
+from .prompt_detector import find_no_echo_answers, find_said_answers, normalize_prompt
 from .learned_answers import reject_answer, remember
 from .site_adapters import ADAPTERS
+
+
+def should_replenish_answers(candidate_count: int) -> bool:
+    """Keep the visible list stocked once five or fewer answers remain."""
+    return candidate_count <= 5
 
 
 class KrillionSolverApp(tk.Tk):
@@ -23,20 +33,24 @@ class KrillionSolverApp(tk.Tk):
         self.compact = False
         self.events: queue.Queue = queue.Queue()
         self.search_worker = SearchWorker(self.events)
-        self.monitor: BrowserMonitor | None = None
+        self.monitor: BrowserMonitor | PlaydailyMonitor | None = None
         self.current_prompt = ""
         self.request_id = 0
         self.auto_search = tk.BooleanVar(value=True)
         self.always_on_top = tk.BooleanVar(value=False)
         self.diagnostics = tk.BooleanVar(value=False)
         self.site = tk.StringVar(value="Krillion")
+        self.playdaily = tk.BooleanVar(value=False)
         self.url = tk.StringVar(value=ADAPTERS["Krillion"].default_url)
         self.browser_status = tk.StringVar(value="Stopped")
+        self.ollama_status = tk.StringVar(value="Ollama: checking…")
+        self._ollama_status_inflight = False
         self.search_status = tk.StringVar(value="Waiting for a prompt")
         self.prompt_var = tk.StringVar(value="No prompt detected yet")
         self.current_candidates: list[dict] = []
         self.rejected_answers: list[str] = []
         self.said_answers: list[str] = []
+        self._replenishment_bases: dict[int, list[dict]] = {}
         self._rendered_signature: tuple | None = None
         self._configure_styles()
         self._build()
@@ -45,6 +59,7 @@ class KrillionSolverApp(tk.Tk):
         self.bind_all("<Button-5>", lambda event: self._route_scroll_button(event, 1), add="+")
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.after(100, self._poll_events)
+        self.after(250, self._refresh_ollama_status)
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self)
@@ -91,6 +106,11 @@ class KrillionSolverApp(tk.Tk):
         selector = ttk.Combobox(controls, textvariable=self.site, values=list(ADAPTERS), state="readonly", width=16)
         selector.grid(row=0, column=1, sticky="w", padx=(8, 16))
         selector.bind("<<ComboboxSelected>>", self._site_changed)
+        self.playdaily_check = ttk.Checkbutton(
+            controls, text="Use Playdaily.org", variable=self.playdaily,
+            command=self._playdaily_changed,
+        )
+        self.playdaily_check.grid(row=0, column=2, columnspan=3, sticky="w")
         ttk.Label(controls, text="URL").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(controls, textvariable=self.url).grid(row=1, column=1, columnspan=4, sticky="ew", padx=(8, 0), pady=(8, 0))
         buttons = ttk.Frame(controls, style="App.TFrame")
@@ -106,6 +126,7 @@ class KrillionSolverApp(tk.Tk):
         options.grid(row=1, column=0, sticky="ew")
         ttk.Checkbutton(options, text="Automatic answers", variable=self.auto_search).pack(side="left")
         ttk.Checkbutton(options, text="Diagnostics", variable=self.diagnostics).pack(side="left")
+        ttk.Label(options, textvariable=self.ollama_status, style="Status.TLabel").pack(side="right")
 
         prompt = ttk.LabelFrame(self, text="LIVE PROMPT", padding=7, style="Card.TLabelframe")
         prompt.grid(row=2, column=0, sticky="ew", padx=8, pady=3)
@@ -187,9 +208,41 @@ class KrillionSolverApp(tk.Tk):
         self.ideas_frame.configure(height=210 if enabled else 195)
 
     def _site_changed(self, _event=None) -> None:
-        self.url.set(ADAPTERS[self.site.get()].default_url)
+        if self.site.get() == "Krillion":
+            self.playdaily_check.grid()
+            self.url.set(PLAYDAILY_URL if self.playdaily.get() else ADAPTERS["Krillion"].default_url)
+        else:
+            self.playdaily.set(False)
+            self.playdaily_check.grid_remove()
+            self.url.set(ADAPTERS[self.site.get()].default_url)
         if self.monitor and self.monitor.is_alive():
             self.restart()
+
+    def _playdaily_changed(self) -> None:
+        self.url.set(PLAYDAILY_URL if self.playdaily.get() else ADAPTERS["Krillion"].default_url)
+        if self.monitor and self.monitor.is_alive():
+            self.restart()
+
+    def _refresh_ollama_status(self) -> None:
+        if self._ollama_status_inflight or not self.winfo_exists():
+            return
+        self._ollama_status_inflight = True
+
+        def check() -> None:
+            status = "Ollama: offline"
+            try:
+                request = Request(f"{OLLAMA_HOST}/api/ps", method="GET")
+                with urlopen(request, timeout=2.0) as response:
+                    models = json.loads(response.read().decode("utf-8")).get("models", [])
+                names = [str(item.get("name", "")) for item in models]
+                wanted = OLLAMA_MODEL.split(":", 1)[0].lower()
+                loaded = next((name for name in names if name.lower().split(":", 1)[0] == wanted), None)
+                status = f"Ollama: {loaded or 'idle'}"
+            except Exception:
+                pass
+            self.events.put(("ollama-status", status))
+
+        threading.Thread(target=check, name="ollama-status", daemon=True).start()
 
     def _top_changed(self) -> None:
         self.attributes("-topmost", self.always_on_top.get())
@@ -206,7 +259,10 @@ class KrillionSolverApp(tk.Tk):
         if self.monitor and self.monitor.is_alive():
             return
         self._reset_game_session()
-        self.monitor = BrowserMonitor(self.site.get(), self.url.get().strip(), self.events)
+        if self.site.get() == "Krillion" and self.playdaily.get():
+            self.monitor = PlaydailyMonitor(self.events)
+        else:
+            self.monitor = BrowserMonitor(self.site.get(), self.url.get().strip(), self.events)
         self.monitor.start()
 
     def stop(self) -> None:
@@ -222,6 +278,7 @@ class KrillionSolverApp(tk.Tk):
         self.current_candidates = []
         self.rejected_answers = []
         self.said_answers = []
+        self._replenishment_bases.clear()
         self.prompt_var.set("No prompt detected yet")
         self.search_status.set("Waiting for a prompt")
         self.search_worker.reset_session()
@@ -244,6 +301,7 @@ class KrillionSolverApp(tk.Tk):
         self.current_candidates = []
         self.rejected_answers = []
         self.said_answers = []
+        self._replenishment_bases.clear()
         self.search_worker.reset_session()
         self.prompt_var.set(prompt)
         self.request_id += 1
@@ -260,18 +318,19 @@ class KrillionSolverApp(tk.Tk):
             self.search_status.set("Enter an answer of 1 to 100 characters")
             return False
         clean_answer = " ".join(answer.split())
-        if not any(item.casefold() == clean_answer.casefold() for item in self.said_answers):
+        if not any(normalize_prompt(item) == normalize_prompt(clean_answer) for item in self.said_answers):
             self.said_answers.append(clean_answer)
         self.search_worker.exclude(self.current_prompt, [clean_answer])
         self.current_candidates = [
             item for item in self.current_candidates
-            if item.get("answer", "").casefold() != clean_answer.casefold()
+            if normalize_prompt(item.get("answer", "")) != normalize_prompt(clean_answer)
         ]
         self._render_candidates(
             self.current_candidates,
             searching=self.search_status.get().startswith(("Asking", "Generating")),
         )
         self.search_status.set(f"✓ {clean_answer} saved and removed")
+        self._replenish_answers_if_low()
         return True
 
     def refresh_search(self) -> None:
@@ -281,9 +340,35 @@ class KrillionSolverApp(tk.Tk):
         self.request_id += 1
         self.search_worker.request(
             self.current_prompt, self.request_id, force=True,
-            excluded_answers=self.rejected_answers, mode=self.site.get(),
+            excluded_answers=(
+                [item.get("answer", "") for item in self.current_candidates]
+                + self.rejected_answers + self.said_answers
+            ), mode=self.site.get(),
         )
         self.search_status.set("Asking Ollama again…")
+
+    def _replenish_answers_if_low(self) -> bool:
+        """Append replacements whenever removals leave five or fewer rows."""
+        if (not self.current_prompt or not self.auto_search.get()
+                or not should_replenish_answers(len(self.current_candidates))):
+            return False
+        self.request_id += 1
+        self._replenishment_bases.clear()
+        self._replenishment_bases[self.request_id] = list(self.current_candidates)
+        self.search_worker.request(
+            self.current_prompt,
+            self.request_id,
+            force=True,
+            excluded_answers=(
+                [item.get("answer", "") for item in self.current_candidates]
+                + self.rejected_answers + self.said_answers
+            ),
+            mode=self.site.get(),
+        )
+        prior = self.search_status.get().strip()
+        prefix = f"{prior} · " if prior else ""
+        self.search_status.set(f"{prefix}Asking Ollama for replacements…")
+        return True
 
     def _reject_answer(self, answer: str) -> None:
         if self.current_prompt and not reject_answer(
@@ -291,11 +376,11 @@ class KrillionSolverApp(tk.Tk):
         ):
             self.search_status.set("Could not save feedback for fine-tuning")
             return
-        if not any(item.casefold() == answer.casefold() for item in self.rejected_answers):
+        if not any(normalize_prompt(item) == normalize_prompt(answer) for item in self.rejected_answers):
             self.rejected_answers.append(answer)
         self.current_candidates = [
             item for item in self.current_candidates
-            if item.get("answer", "").casefold() != answer.casefold()
+            if normalize_prompt(item.get("answer", "")) != normalize_prompt(answer)
         ]
         if self.current_prompt:
             self.search_worker.exclude(self.current_prompt, [answer])
@@ -305,6 +390,7 @@ class KrillionSolverApp(tk.Tk):
         )
         if self.current_prompt:
             self.search_status.set(f"✕ {answer} saved as wrong and removed")
+            self._replenish_answers_if_low()
 
     def _scroll_results_to_top(self) -> None:
         """Start each newly detected question at its first answer."""
@@ -349,12 +435,12 @@ class KrillionSolverApp(tk.Tk):
         ).pack(side="left", anchor="w", fill="x", expand=True)
 
     def _render_candidates(self, candidates: list[dict], searching: bool = False) -> None:
-        hidden = {answer.casefold() for answer in self.rejected_answers + self.said_answers}
-        candidates = [item for item in candidates if item.get("answer", "").casefold() not in hidden]
+        hidden = {normalize_prompt(answer) for answer in self.rejected_answers + self.said_answers}
+        candidates = [item for item in candidates if normalize_prompt(item.get("answer", "")) not in hidden]
         previous = self._rendered_signature or ()
         previous_keys = [item[0] for item in previous if item and item[0] != "__empty__"]
         incoming = {
-            str(item.get("answer", "")).casefold(): item for item in candidates
+            normalize_prompt(str(item.get("answer", ""))): item for item in candidates
         }
         if previous_keys and all(key in incoming for key in previous_keys):
             # Background sources can finish in a different order. Keep every
@@ -363,11 +449,11 @@ class KrillionSolverApp(tk.Tk):
             old_keys = set(previous_keys)
             candidates = existing + [
                 item for item in candidates
-                if str(item.get("answer", "")).casefold() not in old_keys
+                if normalize_prompt(str(item.get("answer", ""))) not in old_keys
             ]
         self.current_candidates = list(candidates)
         signature = tuple(
-            (str(item.get("answer", "")).casefold(), bool(item.get("confirmed")), item.get("origin"))
+            (normalize_prompt(str(item.get("answer", ""))), bool(item.get("confirmed")), item.get("origin"))
             for item in candidates
         ) or (("__empty__", searching),)
         if signature == self._rendered_signature and self.answers_content.winfo_children():
@@ -439,18 +525,21 @@ class KrillionSolverApp(tk.Tk):
         if not self.current_prompt or normalize_prompt(detected_prompt or "") != normalize_prompt(self.current_prompt):
             return
         answers = [str(item.get("answer", "")) for item in self.current_candidates]
-        rejected = find_said_answers(answers, rejected_text, self.current_prompt)
+        rejected = list(dict.fromkeys(
+            find_said_answers(answers, rejected_text, self.current_prompt)
+            + find_no_echo_answers(answers, page_text)
+        ))
         new_rejected = [
             answer for answer in rejected
-            if not any(answer.casefold() == old.casefold() for old in self.rejected_answers)
+            if not any(normalize_prompt(answer) == normalize_prompt(old) for old in self.rejected_answers)
         ]
         for answer in new_rejected:
-            reject_answer(self.current_prompt, answer, mode=self.site.get(), source="game-strikethrough")
+            reject_answer(self.current_prompt, answer, mode=self.site.get(), source="game-rejection")
             self.rejected_answers.append(answer)
         if new_rejected:
             self.search_worker.exclude(self.current_prompt, new_rejected)
-        rejected_keys = {answer.casefold() for answer in rejected}
-        eligible = [answer for answer in answers if answer.casefold() not in rejected_keys]
+        rejected_keys = {normalize_prompt(answer) for answer in rejected}
+        eligible = [answer for answer in answers if normalize_prompt(answer) not in rejected_keys]
         confirmed = find_said_answers(eligible, accepted_text, self.current_prompt)
         typed = {normalize_prompt(value) for value in editable_values if value.strip()}
         fallback_answers = [
@@ -464,7 +553,7 @@ class KrillionSolverApp(tk.Tk):
         ))
         new_answers = [
             answer for answer in found
-            if not any(answer.casefold() == existing.casefold() for existing in self.said_answers)
+            if not any(normalize_prompt(answer) == normalize_prompt(existing) for existing in self.said_answers)
         ]
         if not new_answers and not new_rejected:
             return
@@ -482,6 +571,7 @@ class KrillionSolverApp(tk.Tk):
         if new_rejected:
             status_parts.append(f"removed and saved {len(new_rejected)} struck answer{'s' if len(new_rejected) != 1 else ''} as wrong")
         self.search_status.set(" · ".join(status_parts))
+        self._replenish_answers_if_low()
 
     def _scroll_canvas_under_pointer(self, event) -> tk.Canvas | None:
         widget = self.winfo_containing(event.x_root, event.y_root)
@@ -514,6 +604,16 @@ class KrillionSolverApp(tk.Tk):
         self.search_status.set("Answer copied")
 
     def _render_results(self, payload: dict) -> None:
+        request_id = payload.get("request_id")
+        if request_id in self._replenishment_bases:
+            merged: list[dict] = []
+            seen: set[str] = set()
+            for item in self._replenishment_bases[request_id] + payload.get("candidates", []):
+                key = normalize_prompt(str(item.get("answer", "")))
+                if key and key not in seen:
+                    seen.add(key)
+                    merged.append(item)
+            payload = {**payload, "candidates": merged}
         generating = not payload.get("complete", True)
         self._render_candidates(payload.get("candidates", []), searching=generating)
         error = payload.get("error")
@@ -530,6 +630,8 @@ class KrillionSolverApp(tk.Tk):
             self.search_status.set(error)
         elif not payload.get("candidates"):
             self.search_status.set("No answer returned · check Ollama and its model")
+        if payload.get("complete") and request_id in self._replenishment_bases:
+            self._replenishment_bases.pop(request_id, None)
 
     def _poll_events(self) -> None:
         pending_search: dict | None = None
@@ -546,6 +648,10 @@ class KrillionSolverApp(tk.Tk):
                 elif kind == "browser-error":
                     self.browser_status.set("Error")
                     self.search_status.set(f"Browser error: {value}")
+                elif kind == "ollama-status":
+                    self._ollama_status_inflight = False
+                    self.ollama_status.set(str(value))
+                    self.after(10000, self._refresh_ollama_status)
                 elif kind == "prompt":
                     pending_search = None
                     self._new_prompt(value)
@@ -568,7 +674,7 @@ class KrillionSolverApp(tk.Tk):
                             merged = []
                             seen = set()
                             for item in pending_search.get("candidates", []) + value.get("candidates", []):
-                                key = str(item.get("answer", "")).casefold().strip()
+                                key = normalize_prompt(str(item.get("answer", "")))
                                 if key and key not in seen:
                                     seen.add(key)
                                     merged.append(item)
